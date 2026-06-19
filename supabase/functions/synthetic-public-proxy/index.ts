@@ -8,7 +8,10 @@ import {
 } from "../_shared/http.ts";
 import { logRequest } from "../_shared/log.ts";
 
-const SYNTHETIC_API_KEY = Deno.env.get("SYNTHETIC_API_KEY");
+const SOURCE_APP = "tag";
+const SYNTHETIC_API_KEY_TAG = Deno.env.get("SYNTHETIC_API_KEY_TAG");
+const SYNTHETIC_API_KEY = SYNTHETIC_API_KEY_TAG ?? Deno.env.get("SYNTHETIC_API_KEY");
+const SYNTHETIC_KEY_SCOPE = SYNTHETIC_API_KEY_TAG ? "tag" : "fallback";
 const SYNTHETIC_BASE_URL =
   Deno.env.get("SYNTHETIC_BASE_URL") ?? "https://api.synthetic.new/v1";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
@@ -50,8 +53,8 @@ const PREMIUM_MODELS = new Set([
 
 // Daily limits per tier: { msg, premium }
 const TIER_LIMITS: Record<string, { msg: number; premium: number }> = {
-  anon: { msg: 10, premium: 0 },
-  free: { msg: 50, premium: 0 },
+  anon: { msg: 3, premium: 0 },
+  free: { msg: 10, premium: 0 },
   pro: { msg: 50, premium: 100 },
 };
 
@@ -187,6 +190,13 @@ async function verifyAnonSession(token: string, _expectedIpHash: string): Promis
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Tier = "anon" | "free" | "pro";
+type ChatContent = string | unknown[];
+type RpcClient = {
+  rpc: (
+    fn: string,
+    args: Record<string, unknown>,
+  ) => Promise<{ error: { message: string } | null }>;
+};
 
 // deno-lint-ignore no-explicit-any
 async function getUserTier(supabase: any, userId: string | null): Promise<Tier> {
@@ -212,6 +222,95 @@ function isModelAllowed(tier: Tier, model: string): boolean {
   if (tier === "pro") return PRO_MODELS.has(model);
   if (tier === "free") return FREE_MODELS.has(model);
   return ANON_MODELS.has(model);
+}
+
+function hasStringProp(value: unknown, prop: string): value is Record<string, string> {
+  return typeof value === "object" &&
+    value !== null &&
+    prop in value &&
+    typeof (value as Record<string, unknown>)[prop] === "string";
+}
+
+function hasImageUrl(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || !("image_url" in value)) return false;
+  const imageUrl = (value as { image_url?: unknown }).image_url;
+  return typeof imageUrl === "object" &&
+    imageUrl !== null &&
+    "url" in imageUrl &&
+    typeof (imageUrl as { url?: unknown }).url === "string";
+}
+
+function messageContentLength(content: ChatContent): number {
+  if (typeof content === "string") return content.length;
+  if (!Array.isArray(content)) return 0;
+
+  return content.reduce((total, part) => {
+    if (hasStringProp(part, "text")) return total + part.text.length;
+    if (hasStringProp(part, "content")) return total + part.content.length;
+    if (hasImageUrl(part)) {
+      // Do not count/stash base64 payloads as prompt text; just record that a
+      // multimodal part existed through the vision gate below.
+      return total;
+    }
+    return total;
+  }, 0);
+}
+
+function promptCharCount(messages: Array<{ role: string; content: ChatContent }>): number {
+  return messages.reduce((total, message) => total + messageContentLength(message.content), 0);
+}
+
+async function recordAiRequestEvent(
+  supabase: RpcClient,
+  event: {
+    userId: string | null;
+    ipHash: string | null;
+    tier: Tier;
+    model: string;
+    isPremium: boolean;
+    isByok: boolean;
+    byokProvider?: string | null;
+    syntheticKeyScope: string;
+    status: string;
+    upstreamStatus?: number | null;
+    upstreamLatencyMs?: number | null;
+    totalLatencyMs?: number | null;
+    requestMessageCount: number;
+    promptChars: number;
+    requestedMaxTokens?: number | null;
+    temperature?: number | null;
+    retryAfter?: string | null;
+    errorCode?: string | null;
+    metadata?: Record<string, unknown>;
+  },
+): Promise<void> {
+  const { error } = await supabase.rpc("record_tag_ai_request_event", {
+    p_route: "synthetic-public-proxy",
+    p_user_id: event.userId,
+    p_ip_hash: event.userId ? null : event.ipHash,
+    p_tier: event.tier,
+    p_model: event.model,
+    p_is_premium: event.isPremium,
+    p_is_byok: event.isByok,
+    p_byok_provider: event.byokProvider ?? null,
+    p_synthetic_key_scope: event.syntheticKeyScope,
+    p_status: event.status,
+    p_upstream_status: event.upstreamStatus ?? null,
+    p_upstream_latency_ms: event.upstreamLatencyMs ?? null,
+    p_total_latency_ms: event.totalLatencyMs ?? null,
+    p_request_message_count: event.requestMessageCount,
+    p_prompt_char_count: event.promptChars,
+    p_estimated_prompt_tokens: Math.ceil(event.promptChars / 4),
+    p_requested_max_tokens: event.requestedMaxTokens ?? null,
+    p_temperature: event.temperature ?? null,
+    p_retry_after: event.retryAfter ?? null,
+    p_error_code: event.errorCode ?? null,
+    p_metadata: event.metadata ?? {},
+  });
+
+  if (error) {
+    console.warn("[synthetic-public-proxy] request event tracking failed:", error.message);
+  }
 }
 
 async function sha256(input: string): Promise<string> {
@@ -380,8 +479,7 @@ serve(async (req) => {
   // These are forwarded to synthetic.new untouched — synthetic.new supports the
   // OpenAI multi-modal message format natively.
   let body: {
-    // deno-lint-ignore no-explicit-any
-    messages: Array<{ role: string; content: string | any[] }>;
+    messages: Array<{ role: string; content: ChatContent }>;
     model: string;
     temperature?: number;
     max_tokens?: number;
@@ -405,10 +503,14 @@ serve(async (req) => {
 
   // Request-level timer for structured observability logs
   const reqStart = Date.now();
+  const requestMessageCount = body.messages.length;
+  const promptChars = promptCharCount(body.messages);
+  const requestedMaxTokens = typeof body.max_tokens === "number" ? body.max_tokens : 4096;
+  const requestedTemperature = typeof body.temperature === "number" ? body.temperature : 0.7;
 
   // ── Anon path: IP rate-limit only (T3-style, no captcha) ───────────────────
   // Cloudflare sits in front of Supabase already for DDoS, and anon quota is
-  // capped at 10 msg/day per IP (TIER_LIMITS.anon below). Turnstile was adding
+  // capped at 3 msg/day per IP (TIER_LIMITS.anon below). Turnstile was adding
   // friction and bugs without much net protection. See commit message for the
   // product trade-off. The Turnstile signing helpers above are kept (dead code
   // for now) so they're a one-grep away if abuse forces us to re-enable.
@@ -418,14 +520,33 @@ serve(async (req) => {
 
   // ── Tier resolution ───────────────────────────────────────────────────────
   const tier = await getUserTier(supabase, userId);
+  const ipHash = userId ? null : await sha256(ip);
+  const isByok = !!body.byok_key;
+  const isPremium = PREMIUM_MODELS.has(body.model);
 
   // ── Model whitelist (skip for BYOK) ──────────────────────────────────────
-  if (!body.byok_key) {
+  if (!isByok) {
     if (!isModelAllowed(tier, body.model)) {
+      await recordAiRequestEvent(supabase, {
+        userId,
+        ipHash,
+        tier,
+        model: body.model,
+        isPremium,
+        isByok,
+        syntheticKeyScope: SYNTHETIC_KEY_SCOPE,
+        status: "model_not_allowed",
+        totalLatencyMs: Date.now() - reqStart,
+        requestMessageCount,
+        promptChars,
+        requestedMaxTokens,
+        temperature: requestedTemperature,
+        errorCode: "model_not_allowed",
+      });
       return errorResponse(
         {
           error: "Model not allowed for your tier",
-          upgrade_url: "https://hecz.dev/pricing",
+          upgrade_url: "https://hecz.dev/chat/pricing",
           your_tier: tier,
           requested_model: body.model,
         },
@@ -435,16 +556,13 @@ serve(async (req) => {
   }
 
   // ── Quota check + increment (skip for BYOK) ───────────────────────────────
-  if (!body.byok_key) {
-    const ipHash = await sha256(ip);
-    const isPremium = PREMIUM_MODELS.has(body.model);
-
+  if (!isByok) {
     const l = TIER_LIMITS[tier];
     const { data: usage, error: usageError } = await supabase.rpc(
       "increment_chat_usage",
       {
         p_user_id: userId ?? null,
-        p_ip_hash: userId ? null : ipHash,
+        p_ip_hash: ipHash,
         p_is_premium: isPremium,
         p_msg_limit: l.msg,
         p_premium_limit: l.premium,
@@ -457,15 +575,37 @@ serve(async (req) => {
     }
 
     if (usage.quota_exceeded) {
+      await recordAiRequestEvent(supabase, {
+        userId,
+        ipHash,
+        tier,
+        model: body.model,
+        isPremium,
+        isByok,
+        syntheticKeyScope: SYNTHETIC_KEY_SCOPE,
+        status: "quota_exceeded",
+        totalLatencyMs: Date.now() - reqStart,
+        requestMessageCount,
+        promptChars,
+        requestedMaxTokens,
+        temperature: requestedTemperature,
+        errorCode: "daily_quota_exceeded",
+        metadata: {
+          msg_count: usage.msg_count,
+          premium_msg_count: usage.premium_msg_count,
+          limits: l,
+        },
+      });
       logRequest({
         route: "synthetic-public-proxy",
         status: "quota_exceeded",
         start: reqStart,
+        source_app: SOURCE_APP,
         tier,
         model: body.model,
         upstream_latency_ms: -1,
         user_id: userId ?? undefined,
-        ip_hash: !userId ? ipHash.slice(0, 8) : undefined,
+        ip_hash: ipHash ? ipHash.slice(0, 8) : undefined,
       });
       return errorResponse(
         {
@@ -473,7 +613,7 @@ serve(async (req) => {
           your_tier: tier,
           used: { msg_count: usage.msg_count, premium_msg_count: usage.premium_msg_count },
           limits: l,
-          upgrade_url: tier === "pro" ? null : "https://hecz.dev/pricing",
+          upgrade_url: tier === "pro" ? null : "https://hecz.dev/chat/pricing",
         },
         429,
       );
@@ -487,8 +627,10 @@ serve(async (req) => {
   // Check all messages, not just the last.
   const hasVisionContent = body.messages.some((msg) => {
     if (Array.isArray(msg.content)) {
-      // deno-lint-ignore no-explicit-any
-      return msg.content.some((part: any) => part?.type !== "text");
+      return msg.content.some((part) => {
+        if (typeof part !== "object" || part === null || !("type" in part)) return true;
+        return (part as { type?: unknown }).type !== "text";
+      });
     }
     if (typeof msg.content === "string") {
       return /data:image\//i.test(msg.content);
@@ -496,11 +638,26 @@ serve(async (req) => {
     return false;
   });
   if (hasVisionContent && tier !== "pro") {
+    await recordAiRequestEvent(supabase, {
+      userId,
+      ipHash,
+      tier,
+      model: body.model,
+      isPremium,
+      isByok,
+      syntheticKeyScope: isByok ? "byok" : SYNTHETIC_KEY_SCOPE,
+      status: "vision_requires_pro",
+      totalLatencyMs: Date.now() - reqStart,
+      requestMessageCount,
+      promptChars,
+      requestedMaxTokens,
+      temperature: requestedTemperature,
+      errorCode: "vision_requires_pro",
+    });
     return errorResponse({ error: "vision_requires_pro" }, 403);
   }
 
   // ── Build upstream request ────────────────────────────────────────────────
-  const isByok = !!body.byok_key;
   const upstreamUrl = isByok
     ? (PROVIDER_ENDPOINTS[body.byok_provider ?? ""] ??
         "https://api.synthetic.new/v1/chat/completions")
@@ -511,8 +668,8 @@ serve(async (req) => {
   const payload = {
     model: body.model,
     messages: body.messages,
-    temperature: body.temperature ?? 0.7,
-    max_tokens: body.max_tokens ?? 4096,
+    temperature: requestedTemperature,
+    max_tokens: requestedMaxTokens,
     stream: true,
   };
 
@@ -542,17 +699,58 @@ serve(async (req) => {
     if (!upstream.ok) {
       let detail: unknown = null;
       try { detail = await upstream.json(); } catch { detail = await upstream.text(); }
-      logRequest({
-        route: "synthetic-public-proxy",
-        status: "upstream_error",
-        start: reqStart,
+      const retryAfter = upstream.headers.get("retry-after");
+      await recordAiRequestEvent(supabase, {
+        userId,
+        ipHash,
         tier,
         model: body.model,
+        isPremium,
+        isByok,
+        byokProvider: body.byok_provider,
+        syntheticKeyScope: isByok ? "byok" : SYNTHETIC_KEY_SCOPE,
+        status: upstream.status === 429 ? "synthetic_rate_limited" : "upstream_error",
+        upstreamStatus: upstream.status,
+        upstreamLatencyMs,
+        totalLatencyMs: Date.now() - reqStart,
+        requestMessageCount,
+        promptChars,
+        requestedMaxTokens,
+        temperature: requestedTemperature,
+        retryAfter,
+        errorCode: upstream.status === 429 ? "synthetic_rate_limited" : "upstream_error",
+        metadata: {
+          detail_type: typeof detail,
+        },
+      });
+      logRequest({
+        route: "synthetic-public-proxy",
+        status: upstream.status === 429 ? "synthetic_rate_limited" : "upstream_error",
+        start: reqStart,
+        source_app: SOURCE_APP,
+        tier,
+        model: body.model,
+        synthetic_key_scope: isByok ? "byok" : SYNTHETIC_KEY_SCOPE,
         upstream_latency_ms: upstreamLatencyMs,
         upstream_status: upstream.status,
         user_id: userId ?? undefined,
-        ip_hash: !userId ? (await sha256(ip)).slice(0, 8) : undefined,
+        ip_hash: ipHash ? ipHash.slice(0, 8) : undefined,
       });
+      if (upstream.status === 429) {
+        return jsonResponse(
+          {
+            error: "synthetic_rate_limited",
+            message: "Synthetic hosted key is currently rate-limited.",
+            hint: "You still may have account credits; this usually means the five-hour request bucket, concurrency, or a model-specific throttle is exhausted. Use BYOK or try again shortly.",
+            provider_status: upstream.status,
+            detail,
+          },
+          {
+            status: 429,
+            headers: retryAfter ? { "Retry-After": retryAfter } : undefined,
+          },
+        );
+      }
       // 404 with a model-not-found hint → return a user-friendly message
       if (upstream.status === 404) {
         const detailStr = typeof detail === "string" ? detail : JSON.stringify(detail ?? "");
@@ -571,15 +769,36 @@ serve(async (req) => {
       );
     }
 
+    await recordAiRequestEvent(supabase, {
+      userId,
+      ipHash,
+      tier,
+      model: body.model,
+      isPremium,
+      isByok,
+      byokProvider: body.byok_provider,
+      syntheticKeyScope: isByok ? "byok" : SYNTHETIC_KEY_SCOPE,
+      status: isByok ? "byok_passthrough" : "ok",
+      upstreamStatus: upstream.status,
+      upstreamLatencyMs,
+      totalLatencyMs: Date.now() - reqStart,
+      requestMessageCount,
+      promptChars,
+      requestedMaxTokens,
+      temperature: requestedTemperature,
+    });
+
     logRequest({
       route: "synthetic-public-proxy",
       status: isByok ? "byok_passthrough" : "ok",
       start: reqStart,
+      source_app: SOURCE_APP,
       tier,
       model: body.model,
+      synthetic_key_scope: isByok ? "byok" : SYNTHETIC_KEY_SCOPE,
       upstream_latency_ms: upstreamLatencyMs,
       user_id: userId ?? undefined,
-      ip_hash: !userId ? (await sha256(ip)).slice(0, 8) : undefined,
+      ip_hash: ipHash ? ipHash.slice(0, 8) : undefined,
     });
 
     // Pass the upstream SSE stream straight through to the client.
@@ -599,16 +818,39 @@ serve(async (req) => {
       headers: streamHeaders,
     });
   } catch (err) {
+    await recordAiRequestEvent(supabase, {
+      userId,
+      ipHash,
+      tier,
+      model: body.model,
+      isPremium,
+      isByok,
+      byokProvider: body.byok_provider,
+      syntheticKeyScope: isByok ? "byok" : SYNTHETIC_KEY_SCOPE,
+      status: "internal_error",
+      upstreamLatencyMs: -1,
+      totalLatencyMs: Date.now() - reqStart,
+      requestMessageCount,
+      promptChars,
+      requestedMaxTokens,
+      temperature: requestedTemperature,
+      errorCode: "internal_error",
+      metadata: {
+        error: err instanceof Error ? err.message : "unknown",
+      },
+    });
     logRequest({
       route: "synthetic-public-proxy",
       status: "upstream_error",
       start: reqStart,
+      source_app: SOURCE_APP,
       tier,
       model: body.model,
+      synthetic_key_scope: isByok ? "byok" : SYNTHETIC_KEY_SCOPE,
       upstream_latency_ms: -1,
       error: err instanceof Error ? err.message : "unknown",
       user_id: userId ?? undefined,
-      ip_hash: !userId ? (await sha256(ip)).slice(0, 8) : undefined,
+      ip_hash: ipHash ? ipHash.slice(0, 8) : undefined,
     });
     return errorResponse({ error: "internal error" }, 500);
   }

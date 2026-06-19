@@ -100,7 +100,7 @@ export const MODELS: ModelOption[] = [
     id: "fal:flux/schnell",
     label: "FLUX Schnell",
     provider: "synthetic",
-    tier: "anon",
+    tier: "free",
     description: "Fast FLUX image generation. Free tier.",
     pricing: "Free",
     modality: "image",
@@ -122,11 +122,14 @@ interface Props {
   value: string;
   onChange: (modelId: string) => void;
   onUpgrade?: () => void;
+  onOpenBYOK?: () => void;
   /** When provided by the parent (Chat.tsx), used directly — no internal auth subscription. */
-  tier?: "free" | "pro";
+  tier?: Tier;
+  /** A user-supplied Synthetic key pays the provider directly, so hf: text models bypass Hecz tier gates. */
+  hasSyntheticBYOK?: boolean;
 }
 
-export function ModelPicker({ value, onChange, onUpgrade, tier: tierProp }: Props) {
+export function ModelPicker({ value, onChange, onUpgrade, onOpenBYOK, tier: tierProp, hasSyntheticBYOK = false }: Props) {
   // Internal tier state is only used when the parent does not pass `tier`.
   // Chat.tsx always passes it, so the subscription below is a dead path in that context.
   const [tierInternal, setTierInternal] = useState<Tier>("anon");
@@ -169,6 +172,9 @@ export function ModelPicker({ value, onChange, onUpgrade, tier: tierProp }: Prop
   const selectedModel = MODELS.find((m) => m.id === value) ?? MODELS[0];
 
   const isModelAllowed = (model: ModelOption): boolean => {
+    if (hasSyntheticBYOK && model.id.startsWith("hf:") && model.modality !== "image") {
+      return true;
+    }
     if (model.tier === "anon") return true;
     if (model.tier === "free") return tier === "free" || tier === "pro";
     if (model.tier === "pro") return tier === "pro";
@@ -229,6 +235,11 @@ export function ModelPicker({ value, onChange, onUpgrade, tier: tierProp }: Prop
                               Pro
                             </span>
                           )}
+                          {hasSyntheticBYOK && model.id.startsWith("hf:") && model.tier !== "anon" && (
+                            <span className="text-[10px] uppercase tracking-wider text-emerald-600 font-semibold">
+                              BYOK
+                            </span>
+                          )}
                           {isSelected && <Check className="h-3.5 w-3.5 text-primary" />}
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
@@ -247,7 +258,7 @@ export function ModelPicker({ value, onChange, onUpgrade, tier: tierProp }: Prop
               })}
             </div>
             {tier !== "pro" && (
-              <div className="border-t border-border p-3">
+              <div className="border-t border-border p-3 space-y-2">
                 <button
                   type="button"
                   onClick={() => onUpgrade?.()}
@@ -255,6 +266,18 @@ export function ModelPicker({ value, onChange, onUpgrade, tier: tierProp }: Prop
                 >
                   Upgrade to Pro for premium models →
                 </button>
+                {!hasSyntheticBYOK && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpen(false);
+                      onOpenBYOK?.();
+                    }}
+                    className="block w-full text-center text-xs text-muted-foreground hover:text-foreground hover:underline"
+                  >
+                    Use your own Synthetic key instead
+                  </button>
+                )}
               </div>
             )}
           </div>

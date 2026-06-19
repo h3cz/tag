@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Crown, Send, ChevronDown, Check, Lock } from "lucide-react";
+import { Crown, Send, ChevronDown, Check, Key, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MODELS, type ModelOption } from "@/components/chat/ModelPicker";
+import { MODELS } from "@/components/chat/ModelPicker";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 const PROXY_URL = `${SUPABASE_URL}/functions/v1/synthetic-public-proxy`;
@@ -13,6 +13,145 @@ const DEFAULT_COMPARE_MODELS = [
   "hf:moonshotai/Kimi-K2.6",
 ];
 
+const DEFAULT_BYOK_COMPARE_MODELS = [
+  "byok:openai:gpt-4o-mini",
+  "byok:openrouter:openai/gpt-4o-mini",
+  "byok:google:gemini-2.5-flash",
+];
+
+interface CompareModelOption {
+  id: string;
+  label: string;
+  description: string;
+  pricing?: string;
+  tier: "anon" | "free" | "pro" | "byok";
+  provider: "synthetic" | "byok";
+  providerKey?: string;
+  upstreamModel?: string;
+}
+
+const BYOK_COMPARE_MODELS: CompareModelOption[] = [
+  {
+    id: "byok:openai:gpt-4o-mini",
+    label: "OpenAI GPT-4o mini",
+    description: "Uses your OpenAI API key.",
+    tier: "byok",
+    provider: "byok",
+    providerKey: "openai",
+    upstreamModel: "gpt-4o-mini",
+  },
+  {
+    id: "byok:openai:gpt-4o",
+    label: "OpenAI GPT-4o",
+    description: "Uses your OpenAI API key.",
+    tier: "byok",
+    provider: "byok",
+    providerKey: "openai",
+    upstreamModel: "gpt-4o",
+  },
+  {
+    id: "byok:openrouter:openai/gpt-4o-mini",
+    label: "OpenRouter GPT-4o mini",
+    description: "Uses your OpenRouter key.",
+    tier: "byok",
+    provider: "byok",
+    providerKey: "openrouter",
+    upstreamModel: "openai/gpt-4o-mini",
+  },
+  {
+    id: "byok:openrouter:anthropic/claude-3.5-sonnet",
+    label: "OpenRouter Claude",
+    description: "Claude via your OpenRouter key.",
+    tier: "byok",
+    provider: "byok",
+    providerKey: "openrouter",
+    upstreamModel: "anthropic/claude-3.5-sonnet",
+  },
+  {
+    id: "byok:google:gemini-2.5-flash",
+    label: "Google Gemini Flash",
+    description: "Uses your Google AI key.",
+    tier: "byok",
+    provider: "byok",
+    providerKey: "google",
+    upstreamModel: "gemini-2.5-flash",
+  },
+  {
+    id: "byok:google:gemini-2.5-pro",
+    label: "Google Gemini Pro",
+    description: "Uses your Google AI key.",
+    tier: "byok",
+    provider: "byok",
+    providerKey: "google",
+    upstreamModel: "gemini-2.5-pro",
+  },
+  {
+    id: "byok:synthetic:hf:moonshotai/Kimi-K2.6",
+    label: "Synthetic Kimi K2.6",
+    description: "Uses your Synthetic.new key.",
+    tier: "byok",
+    provider: "byok",
+    providerKey: "synthetic",
+    upstreamModel: "hf:moonshotai/Kimi-K2.6",
+  },
+  {
+    id: "byok:synthetic:hf:zai-org/GLM-5.1",
+    label: "Synthetic GLM 5.1",
+    description: "Uses your Synthetic.new key.",
+    tier: "byok",
+    provider: "byok",
+    providerKey: "synthetic",
+    upstreamModel: "hf:zai-org/GLM-5.1",
+  },
+  {
+    id: "byok:ollama:llama3.1",
+    label: "Ollama llama3.1",
+    description: "Uses your local Ollama OpenAI-compatible endpoint.",
+    tier: "byok",
+    provider: "byok",
+    providerKey: "ollama",
+    upstreamModel: "llama3.1",
+  },
+];
+
+function getAvailableCompareModels(byokKeys: Record<string, string> | undefined): CompareModelOption[] {
+  const hostedModels: CompareModelOption[] = MODELS
+    .filter((m) => m.modality !== "image")
+    .map((m) => ({
+      id: m.id,
+      label: m.label,
+      description: m.description,
+      pricing: m.pricing,
+      tier: m.tier === "byok" ? "byok" : m.tier,
+      provider: m.provider,
+    }));
+
+  const byokModels = BYOK_COMPARE_MODELS.filter((m) => {
+    if (!m.providerKey) return false;
+    const value = byokKeys?.[m.providerKey];
+    return typeof value === "string" && value.trim().length > 0;
+  });
+
+  return [...hostedModels, ...byokModels];
+}
+
+function getDefaultCompareModels(tier: "anon" | "free" | "pro", byokKeys: Record<string, string> | undefined): string[] {
+  if (tier === "pro") return DEFAULT_COMPARE_MODELS;
+
+  const byokDefaults = DEFAULT_BYOK_COMPARE_MODELS.filter((id) => {
+    const model = BYOK_COMPARE_MODELS.find((m) => m.id === id);
+    if (!model?.providerKey) return false;
+    return Boolean(byokKeys?.[model.providerKey]);
+  });
+
+  if (byokDefaults.length > 0) return byokDefaults;
+  return DEFAULT_COMPARE_MODELS;
+}
+
+function getSlotKey(slotIndex: number, modelId: string): string {
+  return `${slotIndex}:${modelId}`;
+}
+
 interface ModelResponseState {
   text: string;
   loading: boolean;
@@ -21,7 +160,7 @@ interface ModelResponseState {
 
 interface Props {
   jwt: string | null;
-  tier: "free" | "pro";
+  tier: "anon" | "free" | "pro";
   byokKeys: Record<string, string> | undefined;
   onUpgrade: () => void;
 }
@@ -31,15 +170,18 @@ function SlotModelChip({
   modelId,
   onSwap,
   tier,
+  byokKeys,
   onUpgrade,
 }: {
   modelId: string;
   onSwap: (newId: string) => void;
-  tier: "free" | "pro";
+  tier: "anon" | "free" | "pro";
+  byokKeys: Record<string, string> | undefined;
   onUpgrade: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const model = MODELS.find((m) => m.id === modelId) ?? MODELS[0];
+  const availableModels = getAvailableCompareModels(byokKeys);
+  const model = availableModels.find((m) => m.id === modelId) ?? availableModels[0] ?? MODELS[0];
 
   return (
     <div className="relative">
@@ -61,14 +203,15 @@ function SlotModelChip({
           />
           <div className="absolute left-0 top-full mt-1 z-50 w-64 rounded-lg border border-border bg-card shadow-lg">
             <div className="p-1.5 max-h-72 overflow-y-auto">
-              {MODELS.map((m) => {
+              {availableModels.map((m) => {
                 const isSelected = m.id === modelId;
+                const isByok = m.tier === "byok";
                 return (
                   <button
                     key={m.id}
                     type="button"
                     onClick={() => {
-                      if (m.tier === "pro" && tier !== "pro") {
+                      if (m.tier === "pro" && tier !== "pro" && !byokKeys?.synthetic) {
                         setOpen(false);
                         onUpgrade();
                         return;
@@ -90,13 +233,19 @@ function SlotModelChip({
                               Pro
                             </span>
                           )}
+                          {isByok && (
+                            <span className="text-[9px] uppercase tracking-wider text-emerald-600 font-semibold">
+                              BYOK
+                            </span>
+                          )}
                         </div>
                         <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
                           {m.description}
                         </p>
                       </div>
                       {isSelected && <Check className="h-3 w-3 text-primary shrink-0" />}
-                      {m.tier === "pro" && (
+                      {isByok && <Key className="h-3 w-3 text-emerald-600 shrink-0" />}
+                      {m.tier === "pro" && !byokKeys?.synthetic && (
                         <Lock className="h-3 w-3 text-muted-foreground shrink-0" />
                       )}
                     </div>
@@ -117,6 +266,11 @@ async function fetchModelResponse(
   jwt: string | null,
   byokKeys: Record<string, string> | undefined
 ): Promise<string> {
+  const byokModel = BYOK_COMPARE_MODELS.find((m) => m.id === modelId);
+  if (byokModel) {
+    return fetchBYOKModelResponse(prompt, byokModel, byokKeys);
+  }
+
   // BYOK keys NEVER touch our server. If user has a synthetic key for an hf:
   // model, fetch direct to api.synthetic.new. Anything else routes through
   // the proxy WITHOUT the key — proxy uses its own SYNTHETIC_API_KEY (counted
@@ -168,21 +322,84 @@ async function fetchModelResponse(
   return data.choices?.[0]?.message?.content ?? "";
 }
 
+async function fetchBYOKModelResponse(
+  prompt: string,
+  model: CompareModelOption,
+  byokKeys: Record<string, string> | undefined,
+): Promise<string> {
+  const provider = model.providerKey;
+  const key = provider ? byokKeys?.[provider]?.trim() : "";
+  if (!provider || !key) {
+    throw new Error(`Add a ${provider ?? "provider"} key in BYOK settings first.`);
+  }
+
+  const upstreamModel = model.upstreamModel ?? model.id;
+  let url = "";
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+
+  if (provider === "openai") {
+    url = "https://api.openai.com/v1/chat/completions";
+    headers.Authorization = `Bearer ${key}`;
+  } else if (provider === "openrouter") {
+    url = "https://openrouter.ai/api/v1/chat/completions";
+    headers.Authorization = `Bearer ${key}`;
+    headers["HTTP-Referer"] = window.location.origin;
+    headers["X-Title"] = "Tag Compare";
+  } else if (provider === "google") {
+    url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+    headers.Authorization = `Bearer ${key}`;
+  } else if (provider === "synthetic") {
+    url = "https://api.synthetic.new/v1/chat/completions";
+    headers.Authorization = `Bearer ${key}`;
+  } else if (provider === "ollama") {
+    const base = key.replace(/\/+$/g, "");
+    url = `${base}/v1/chat/completions`;
+  } else {
+    throw new Error(`${provider} compare is not wired yet.`);
+  }
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model: upstreamModel,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7,
+      max_tokens: 4096,
+    }),
+  });
+
+  if (!res.ok) {
+    let errMsg = `${model.label} request failed`;
+    try {
+      const errData = await res.json();
+      errMsg = errData?.error?.message ?? errData?.error ?? errData?.message ?? errMsg;
+    } catch {
+      // ignore
+    }
+    throw new Error(errMsg);
+  }
+
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content ?? data.message?.content ?? "";
+}
+
 export function CompareView({ jwt, tier, byokKeys, onUpgrade }: Props) {
-  const [selectedModels, setSelectedModels] = useState<string[]>(DEFAULT_COMPARE_MODELS);
+  const hasBYOKCompare = BYOK_COMPARE_MODELS.some((m) => m.providerKey && Boolean(byokKeys?.[m.providerKey]));
+  const [selectedModels, setSelectedModels] = useState<string[]>(() => getDefaultCompareModels(tier, byokKeys));
   const [prompt, setPrompt] = useState("");
   const [responses, setResponses] = useState<Record<string, ModelResponseState>>({});
   const [hasRun, setHasRun] = useState(false);
 
-  // Pro gate
-  if (tier !== "pro") {
+  // Pro gate, unless the user pays providers directly with BYOK.
+  if (tier !== "pro" && !hasBYOKCompare) {
     return (
       <div className="flex flex-1 items-center justify-center py-16">
         <div className="max-w-sm w-full rounded-xl border border-border bg-card p-8 text-center shadow-sm">
           <Crown className="mx-auto mb-4 h-10 w-10 text-primary" />
           <h2 className="text-lg font-semibold text-foreground mb-2">Pro Feature</h2>
           <p className="text-sm text-muted-foreground mb-6">
-            Compare up to 3 models side-by-side with a single prompt. Upgrade to unlock.
+            Compare up to 3 models side-by-side with a single prompt. Upgrade, or add BYOK keys in settings.
           </p>
           <button
             type="button"
@@ -214,9 +431,9 @@ export function CompareView({ jwt, tier, byokKeys, onUpgrade }: Props) {
 
     // Initialize all slots as loading
     const initial: Record<string, ModelResponseState> = {};
-    for (const modelId of selectedModels) {
-      initial[modelId] = { text: "", loading: true, error: null };
-    }
+    selectedModels.forEach((modelId, slotIndex) => {
+      initial[getSlotKey(slotIndex, modelId)] = { text: "", loading: true, error: null };
+    });
     setResponses(initial);
 
     // Fire all requests in parallel — failures in one slot don't break others
@@ -232,9 +449,9 @@ export function CompareView({ jwt, tier, byokKeys, onUpgrade }: Props) {
       selectedModels.forEach((modelId, i) => {
         const result = results[i];
         if (result.status === "fulfilled") {
-          next[modelId] = { text: result.value, loading: false, error: null };
+          next[getSlotKey(i, modelId)] = { text: result.value, loading: false, error: null };
         } else {
-          next[modelId] = {
+          next[getSlotKey(i, modelId)] = {
             text: "",
             loading: false,
             error: (result.reason as Error)?.message ?? "Unknown error",
@@ -287,8 +504,8 @@ export function CompareView({ jwt, tier, byokKeys, onUpgrade }: Props) {
       {/* Column grid */}
       <div className={cn("grid gap-3", gridCols)}>
         {selectedModels.map((modelId, slotIndex) => {
-          const state = responses[modelId];
-          const modelMeta = MODELS.find((m) => m.id === modelId);
+          const state = responses[getSlotKey(slotIndex, modelId)];
+          const modelMeta = getAvailableCompareModels(byokKeys).find((m) => m.id === modelId);
 
           return (
             <div
@@ -301,6 +518,7 @@ export function CompareView({ jwt, tier, byokKeys, onUpgrade }: Props) {
                   modelId={modelId}
                   onSwap={(newId) => swapModel(slotIndex, newId)}
                   tier={tier}
+                  byokKeys={byokKeys}
                   onUpgrade={onUpgrade}
                 />
                 {modelMeta?.pricing && (

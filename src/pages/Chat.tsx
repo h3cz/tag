@@ -60,6 +60,7 @@ import { FileDropzone } from "@/components/chat/FileDropzone";
 import type { PendingImage } from "@/components/chat/FileDropzone";
 import { SkinPicker, useChatSkin } from "@/components/chat/SkinPicker";
 import { MicButton, TTSButton } from "@/components/chat/VoiceControls";
+import { getHostedDailyLimit } from "@/components/chat/usageLimits";
 import type { Message } from "@ai-sdk/react";
 
 const MessageContent = lazy(() => import("@/components/chat/MessageContent"));
@@ -179,6 +180,8 @@ const TEMPERATURE_KEY = "tag_temperature_v1";
 const MODEL_PRESETS_KEY = "tag_model_presets_v1";
 const DRY_RUN_KEY = "tag_dry_run";
 const PROMPT_TEMPLATES_KEY = "tag_prompt_templates_v1";
+
+type ChatTier = "anon" | "free" | "pro";
 
 // Tools that require user confirmation before the agent executes them
 const ACTIONS_REQUIRING_CONFIRM = new Set([
@@ -834,7 +837,7 @@ export default function Chat() {
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [userId, setUserId] = useState<string | null>(null);
   const [jwt, setJwt] = useState<string | null>(null);
-  const [tier, setTier] = useState<"free" | "pro">("free");
+  const [tier, setTier] = useState<ChatTier>("anon");
 
   // ── Online status indicator ─────────────────────────────────────────────
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
@@ -917,7 +920,7 @@ export default function Chat() {
   const [systemPromptDraft, setSystemPromptDraft] = useState("");
   // Usage display for signed-in users
   const [todayMsgCount, setTodayMsgCount] = useState<number | null>(null);
-  const dailyMsgLimit = 50;
+  const dailyMsgLimit = getHostedDailyLimit(tier);
 
   // ── Workspace state ─────────────────────────────────────────────────────
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(() => {
@@ -1158,7 +1161,7 @@ export default function Chat() {
   }, []);
 
   useEffect(() => {
-    if (!userId) { setTier("free"); return; }
+    if (!userId) { setTier("anon"); return; }
     supabase
       .from("profiles")
       .select("tier")
@@ -1169,6 +1172,23 @@ export default function Chat() {
         else setTier("free");
       });
   }, [userId]);
+
+  useEffect(() => {
+    const selected = MODELS.find((m) => m.id === model);
+    if (!selected) {
+      setModel(DEFAULT_MODEL);
+      return;
+    }
+    const syntheticByokAllowed = Boolean(byokKeys.synthetic) && selected.id.startsWith("hf:") && selected.modality !== "image";
+    if (syntheticByokAllowed) return;
+    if (selected.tier === "pro" && tier !== "pro") {
+      setModel(DEFAULT_MODEL);
+      return;
+    }
+    if (selected.tier === "free" && tier === "anon") {
+      setModel(DEFAULT_MODEL);
+    }
+  }, [byokKeys.synthetic, model, tier]);
 
   // Auto-fire upgrade flow when redirected back from OAuth with ?upgrade=1
   useEffect(() => {
@@ -1570,6 +1590,10 @@ export default function Chat() {
         try {
           const errData = await response.json();
           errMsg = errData?.error ?? errMsg;
+
+          if (errMsg === "synthetic_rate_limited") {
+            errMsg = "Synthetic hosted key is rate-limited right now. Add BYOK to keep going, or try again shortly.";
+          }
 
           // If proxy returns an upstream-failure envelope, surface the upstream
           // status + a short snippet of the upstream body so the user (and us)
@@ -2887,6 +2911,10 @@ export default function Chat() {
   const hasContent = input.trim().length > 0 || pendingImages.length > 0;
   // Vision with images requires Pro — block send and show inline prompt instead.
   const visionBlockedByTier = pendingImages.length > 0 && tier !== "pro";
+  const signedInTier: "free" | "pro" = tier === "pro" ? "pro" : "free";
+  const hasSyntheticBYOK = Boolean(byokKeys.synthetic);
+  const hostedUsagePct = todayMsgCount === null ? 0 : Math.min(100, (todayMsgCount / dailyMsgLimit) * 100);
+  const hostedUsageExhausted = todayMsgCount !== null && todayMsgCount >= dailyMsgLimit;
   const canSend =
     chat.status !== "streaming" &&
     chat.status !== "submitted" &&
@@ -3197,6 +3225,19 @@ export default function Chat() {
                   <span className="truncate flex-1">
                     Account {tier === "pro" && <span className="text-primary font-medium">· Pro</span>}
                   </span>
+                  {todayMsgCount !== null && (
+                    <span
+                      className={cn(
+                        "shrink-0 rounded-full border px-1.5 py-0.5 font-mono text-[9px]",
+                        hostedUsageExhausted
+                          ? "border-destructive/30 bg-destructive/10 text-destructive"
+                          : "border-border bg-background text-muted-foreground"
+                      )}
+                      title="Hosted messages used today. BYOK requests don't count."
+                    >
+                      {todayMsgCount}/{dailyMsgLimit}
+                    </span>
+                  )}
                 </button>
               ) : (
                 <button
@@ -3374,9 +3415,39 @@ export default function Chat() {
             })()}
             {view !== "chat" && <div className="flex-1" />}
 
+            {view === "chat" && userId && todayMsgCount !== null && (
+              <button
+                type="button"
+                onClick={() => setAccountDrawerOpen(true)}
+                className={cn(
+                  "hidden sm:inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11px] transition-colors hover:bg-muted",
+                  hostedUsageExhausted
+                    ? "border-destructive/30 bg-destructive/10 text-destructive"
+                    : "border-border bg-card text-muted-foreground hover:text-foreground"
+                )}
+                title="Hosted messages used today. BYOK requests don't count."
+              >
+                <span className="font-mono tabular-nums">{todayMsgCount}/{dailyMsgLimit}</span>
+                <span className="text-[10px]">hosted</span>
+                <span className="inline-block h-1.5 w-10 overflow-hidden rounded-full bg-muted">
+                  <span
+                    className={cn("block h-full rounded-full", hostedUsageExhausted ? "bg-destructive" : "bg-primary/70")}
+                    style={{ width: `${hostedUsagePct}%` }}
+                  />
+                </span>
+              </button>
+            )}
+
             {/* Model picker — chat mode only */}
             {view === "chat" && (
-              <ModelPicker value={model} onChange={setModel} onUpgrade={handleUpgrade} tier={tier} />
+              <ModelPicker
+                value={model}
+                onChange={setModel}
+                onUpgrade={handleUpgrade}
+                onOpenBYOK={() => setByokOpen(true)}
+                tier={tier}
+                hasSyntheticBYOK={hasSyntheticBYOK}
+              />
             )}
 
             {/* Workspace switcher pill — left of NotificationCenter */}
@@ -3746,7 +3817,9 @@ export default function Chat() {
                         const ctxLabel = ctxTokens >= 1000 ? `${Math.round(ctxTokens / 1000)}k tokens` : `${ctxTokens} tokens`;
                         const costs = MODEL_COSTS[model];
                         const hasCost = costs && (costs.in > 0 || costs.out > 0);
-                        const providerLabel = meta?.provider === "byok" ? "BYOK" : "Synthetic";
+                        const providerLabel = hasSyntheticBYOK && model.startsWith("hf:")
+                          ? "Synthetic BYOK"
+                          : meta?.provider === "byok" ? "BYOK" : "Synthetic";
                         return (
                           <div className="rounded-md bg-muted/40 px-2 py-1.5 space-y-0.5">
                             <p className="text-xs font-medium text-foreground truncate">{meta?.label ?? model}</p>
@@ -3921,7 +3994,7 @@ export default function Chat() {
             </div>
           ) : view === "agent" ? (
             <div className="flex flex-1 min-h-0 overflow-hidden">
-              <AgentView jwt={jwt} tier={tier} onUpgrade={handleUpgrade} />
+              <AgentView jwt={jwt} tier={signedInTier} onUpgrade={handleUpgrade} />
             </div>
           ) : (
             /* Chat layout: messages + memory panel */
@@ -4468,12 +4541,18 @@ export default function Chat() {
                 <div className="shrink-0 bg-background px-4 py-3">
                   {/* Usage indicator — signed-in users only */}
                   {userId && todayMsgCount !== null && (
-                    <div className="mx-auto max-w-3xl mb-1.5 flex items-center gap-1.5">
+                    <div className="mx-auto max-w-3xl mb-1.5 flex items-center justify-between gap-2">
                       <span className="font-mono text-[10px] text-muted-foreground/50">
-                        {todayMsgCount}/{dailyMsgLimit} today
+                        Hosted {todayMsgCount}/{dailyMsgLimit} today
                       </span>
                       {todayMsgCount >= dailyMsgLimit && (
-                        <span className="text-[10px] text-destructive/70">· limit reached</span>
+                        <button
+                          type="button"
+                          onClick={() => setByokOpen(true)}
+                          className="text-[10px] text-destructive/80 underline underline-offset-2 hover:text-destructive"
+                        >
+                          Limit reached. Add BYOK to keep going.
+                        </button>
                       )}
                     </div>
                   )}
@@ -4609,7 +4688,7 @@ export default function Chat() {
                       <div className="flex items-center gap-1">
                         <FileDropzone
                           jwt={jwt}
-                          tier={tier}
+                          tier={signedInTier}
                           onIngested={handleFileIngested}
                           onImageAttached={handleImageAttached}
                         />
@@ -4739,7 +4818,7 @@ export default function Chat() {
         onClose={() => setAccountDrawerOpen(false)}
         jwt={jwt}
         userId={userId}
-        tier={tier}
+        tier={signedInTier}
         onUpgrade={() => { setAccountDrawerOpen(false); handleUpgrade(); }}
       />
 

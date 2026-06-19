@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { X, Crown, LogOut, ExternalLink } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
+import { getHostedDailyLimit, getPremiumDailyLimit } from "./usageLimits";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 
@@ -82,8 +83,8 @@ export function AccountDrawer({ open, onClose, jwt, userId, tier, onUpgrade }: P
     }
   }
 
-  const dailyMsgLimit = 50;
-  const dailyPremiumLimit = tier === "pro" ? 100 : 0;
+  const dailyMsgLimit = getHostedDailyLimit(tier);
+  const dailyPremiumLimit = getPremiumDailyLimit(tier);
   const msgUsed = usage?.msg_count ?? 0;
   const premiumUsed = usage?.premium_msg_count ?? 0;
 
