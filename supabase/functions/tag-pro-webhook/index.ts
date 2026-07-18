@@ -3,6 +3,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.91.1";
 import Stripe from "https://esm.sh/stripe@14?target=deno";
 import { verifyStripeSignature } from "../_shared/stripe.ts";
 import { logRequest } from "../_shared/log.ts";
+import {
+  mailerooReferenceId,
+  readMailerooError,
+  readMailerooResponse,
+  sendMailerooEmail,
+} from "../_shared/maileroo.ts";
 
 serve(async (req: Request) => {
   // Webhooks only come via POST from Stripe — no CORS needed
@@ -58,13 +64,17 @@ serve(async (req: Request) => {
     const session = event.data.object as Stripe.Checkout.Session;
 
     // Only handle Tag Pro subscriptions — skip other checkout sessions
-    if (session.mode !== "subscription" || session.metadata?.product !== "tag-pro") {
+    if (
+      session.mode !== "subscription" || session.metadata?.product !== "tag-pro"
+    ) {
       return new Response("OK", { status: 200 });
     }
 
     const userId = session.client_reference_id ?? session.metadata?.user_id;
     if (!userId) {
-      console.error("tag-pro-webhook: No user_id in checkout.session.completed");
+      console.error(
+        "tag-pro-webhook: No user_id in checkout.session.completed",
+      );
       return new Response("OK", { status: 200 });
     }
 
@@ -128,19 +138,19 @@ serve(async (req: Request) => {
 
     console.log(`tag-pro-webhook: User ${userId} upgraded to pro`);
 
-    // ── Send welcome email (fire-and-forget — never rolls back tier flip) ───
+    // Send the welcome email without ever rolling back the tier update.
     try {
       const mailerooKey = Deno.env.get("MAILEROO_API_KEY");
-      if (!mailerooKey) {
-        console.error("tag-pro-webhook: MAILEROO_API_KEY not configured — skipping welcome email");
+      const { data: userData, error: userError } = await supabase.auth.admin
+        .getUserById(userId);
+      if (userError || !userData?.user?.email) {
+        console.error(
+          "tag-pro-webhook: Could not fetch user email for welcome",
+          userError,
+        );
       } else {
-        // Fetch user email via admin API
-        const { data: userData, error: userError } = await supabase.auth.admin.getUserById(userId);
-        if (userError || !userData?.user?.email) {
-          console.error("tag-pro-webhook: Could not fetch user email for welcome", userError);
-        } else {
-          const toEmail = userData.user.email;
-          const htmlBody = `<!DOCTYPE html>
+        const toEmail = userData.user.email;
+        const htmlBody = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -170,67 +180,219 @@ serve(async (req: Request) => {
     <div class="body">
       <p>Your $7 just unlocked the good models.</p>
       <ul>
-        <li><strong>Kimi-K2.6, GLM-5.1, MiniMax-M2.5, and Nemotron</strong> — the premium fleet is yours.</li>
-        <li><strong>Multi-model compare</strong> — run the same prompt side-by-side across models.</li>
-        <li><strong>100 premium messages/day</strong> — no more throttle when you bring your own keys.</li>
-        <li><strong>Memory</strong> — context that follows you across sessions.</li>
-        <li><strong>File uploads</strong> — drop in a doc and chat with it.</li>
+        <li><strong>Kimi-K2.6, GLM-5.1, MiniMax-M2.5, and Nemotron</strong>: the premium fleet is yours.</li>
+        <li><strong>Multi-model compare</strong>: run the same prompt side-by-side across models.</li>
+        <li><strong>100 premium messages/day</strong>: no more throttle when you bring your own keys.</li>
+        <li><strong>Memory</strong>: context that follows you across sessions.</li>
+        <li><strong>File uploads</strong>: drop in a doc and chat with it.</li>
       </ul>
-      <p>The model picker is in the top bar. Premium models are marked — just select one and go.</p>
+      <p>The model picker is in the top bar. Premium models are marked. Just select one and go.</p>
       <a class="cta" href="https://hecz.dev/chat">Open Tag &rarr;</a>
       <div class="signoff">
-        <p>JR — Tag is open source at <a href="https://github.com/TooFaded420/tag">github.com/TooFaded420/tag</a> if you want to fork it or self-host.</p>
+        <p>JR. Tag is open source at <a href="https://github.com/TooFaded420/tag">github.com/TooFaded420/tag</a> if you want to fork it or self-host.</p>
       </div>
     </div>
   </div>
 </body>
 </html>`;
 
-          const textBody = `Welcome to Tag Pro
+        const textBody = `Welcome to Tag Pro
 
 Your $7 just unlocked the good models.
 
-- Kimi-K2.6, GLM-5.1, MiniMax-M2.5, and Nemotron — the premium fleet is yours.
-- Multi-model compare — run the same prompt side-by-side across models.
-- 100 premium messages/day — no throttle when you bring your own keys.
-- Memory — context that follows you across sessions.
-- File uploads — drop in a doc and chat with it.
+- Kimi-K2.6, GLM-5.1, MiniMax-M2.5, and Nemotron: the premium fleet is yours.
+- Multi-model compare: run the same prompt side-by-side across models.
+- 100 premium messages/day: no throttle when you bring your own keys.
+- Memory: context that follows you across sessions.
+- File uploads: drop in a doc and chat with it.
 
-Open chat at https://hecz.dev/chat — model picker is in the top bar.
+Open chat at https://hecz.dev/chat. The model picker is in the top bar.
 
-—
+JR. Tag is open source at https://github.com/TooFaded420/tag if you want to fork it or self-host.`;
 
-JR — Tag is open source at https://github.com/TooFaded420/tag if you want to fork it or self-host.`;
+        const subject =
+          "Welcome to Tag Pro: your $7 just unlocked the good models";
+        const campaignKey = `tag-pro-welcome:${session.id}`;
+        const { error: campaignSeedError } = await supabase.from(
+          "email_campaigns",
+        ).upsert({
+          campaign_key: campaignKey,
+          kind: "transactional",
+          name: "Tag Pro welcome",
+          subject,
+          audience_tag: "tag-pro",
+          provider_configured: Boolean(mailerooKey),
+          status: "queued",
+        }, { onConflict: "campaign_key", ignoreDuplicates: true });
+        if (campaignSeedError) {
+          throw new Error("Tag Pro email campaign initialization failed");
+        }
 
-          const emailPayload = {
-            from: "hello@hecz.dev",
-            from_name: "Tag",
-            to: toEmail,
-            subject: "Welcome to Tag Pro — your $7 just unlocked the good models",
-            html: htmlBody,
-            plaintext: textBody,
-          };
+        const { data: campaign, error: campaignError } = await supabase
+          .from("email_campaigns")
+          .select("id")
+          .eq("campaign_key", campaignKey)
+          .single();
+        if (campaignError || !campaign) {
+          throw new Error("Tag Pro email campaign lookup failed");
+        }
+        const { error: providerStateError } = await supabase
+          .from("email_campaigns")
+          .update({ provider_configured: Boolean(mailerooKey) })
+          .eq("id", campaign.id);
+        if (providerStateError) {
+          throw new Error("Tag Pro provider state update failed");
+        }
 
-          const emailRes = await fetch("https://api.maileroo.com/v2/emails/send", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-API-Key": mailerooKey,
+        const { error: deliverySeedError } = await supabase.from(
+          "email_deliveries",
+        ).upsert({
+          campaign_id: campaign.id,
+          recipient_email: toEmail,
+        }, {
+          onConflict: "campaign_id,recipient_email",
+          ignoreDuplicates: true,
+        });
+        if (deliverySeedError) {
+          throw new Error("Tag Pro delivery initialization failed");
+        }
+
+        const { data: delivery, error: deliveryError } = await supabase
+          .from("email_deliveries")
+          .select("id, provider_email_id")
+          .eq("campaign_id", campaign.id)
+          .eq("recipient_email", toEmail)
+          .single();
+        if (deliveryError || !delivery) {
+          throw new Error("Tag Pro delivery lookup failed");
+        }
+
+        if (!mailerooKey) {
+          console.error(
+            "tag-pro-webhook: MAILEROO_API_KEY not configured, welcome email remains queued",
+          );
+        } else if (!delivery.provider_email_id) {
+          const { data: claimed, error: claimError } = await supabase.rpc(
+            "claim_email_delivery",
+            {
+              p_delivery_id: delivery.id,
             },
-            body: JSON.stringify(emailPayload),
-          });
+          );
+          if (claimError) throw new Error("Tag Pro delivery claim failed");
 
-          if (!emailRes.ok) {
-            const errText = await emailRes.text().catch(() => "(unreadable)");
-            console.error(`tag-pro-webhook: Welcome email failed (${emailRes.status}): ${errText}`);
-          } else {
-            console.log(`tag-pro-webhook: Welcome email sent to ${toEmail}`);
+          if (claimed) {
+            let emailResponse: Response | null = null;
+            try {
+              emailResponse = await sendMailerooEmail(mailerooKey, {
+                from: { address: "hello@hecz.dev", display_name: "Tag" },
+                to: { address: toEmail },
+                reply_to: { address: "hector@hecz.dev", display_name: "JR" },
+                subject,
+                html: htmlBody,
+                plain: textBody,
+                tracking: true,
+                tags: {
+                  campaign_id: campaign.id,
+                  delivery_id: delivery.id,
+                  category: "tag_pro_welcome",
+                },
+                reference_id: mailerooReferenceId(delivery.id),
+              });
+            } catch {
+              emailResponse = null;
+            }
+
+            if (emailResponse?.ok) {
+              const result = await readMailerooResponse(emailResponse);
+              if (!result.data?.reference_id) {
+                const occurredAt = new Date().toISOString();
+                await supabase.from("email_deliveries").update({
+                  status: "unknown",
+                  failed_at: occurredAt,
+                  last_event_at: occurredAt,
+                  error_code: "missing_provider_id",
+                  error_message: "Maileroo returned no reference id",
+                }).eq("id", delivery.id).is("provider_email_id", null);
+                throw new Error("Maileroo returned no reference id");
+              }
+              const acceptedAt = new Date().toISOString();
+              const { data: persisted, error: acceptanceError } = await supabase
+                .rpc(
+                  "record_email_acceptances",
+                  {
+                    p_acceptances: [{
+                      delivery_id: delivery.id,
+                      provider_email_id: result.data.reference_id,
+                      accepted_at: acceptedAt,
+                    }],
+                  },
+                );
+              if (acceptanceError || persisted !== 1) {
+                const occurredAt = new Date().toISOString();
+                await supabase.from("email_deliveries").update({
+                  status: "unknown",
+                  failed_at: occurredAt,
+                  last_event_at: occurredAt,
+                  error_code: "acceptance_persistence_failed",
+                  error_message:
+                    "Maileroo accepted the email but local persistence failed",
+                }).eq("id", delivery.id).is("provider_email_id", null);
+                throw new Error(
+                  "Tag Pro delivery acceptance persistence failed",
+                );
+              }
+              console.log(
+                `tag-pro-webhook: Welcome email accepted for ${toEmail}`,
+              );
+            } else {
+              const occurredAt = new Date().toISOString();
+              const status = emailResponse?.status === 429
+                ? "queued"
+                : !emailResponse || emailResponse.status >= 500
+                ? "unknown"
+                : "failed";
+              const errorMessage = emailResponse
+                ? await readMailerooError(emailResponse)
+                : "Maileroo request outcome is unknown";
+              const { error: sendError } = await supabase.from(
+                "email_deliveries",
+              ).update({
+                status,
+                failed_at: status === "queued" ? null : occurredAt,
+                last_event_at: occurredAt,
+                error_code: `maileroo_${emailResponse?.status ?? "network"}`,
+                error_message: errorMessage,
+              }).eq("id", delivery.id).is("provider_email_id", null);
+              if (sendError) {
+                throw new Error("Tag Pro delivery failure persistence failed");
+              }
+            }
           }
         }
+
+        const { error: rollupError } = await supabase.rpc(
+          "refresh_email_campaign_rollup",
+          {
+            p_campaign_id: campaign.id,
+            p_finalize: false,
+            p_provider_hourly_limit: Number.parseInt(
+              Deno.env.get("MAILEROO_HOURLY_LIMIT") ?? "",
+              10,
+            ) || undefined,
+            p_provider_monthly_limit: Number.parseInt(
+              Deno.env.get("MAILEROO_MONTHLY_LIMIT") ?? "",
+              10,
+            ) || undefined,
+          },
+        );
+        if (rollupError) throw new Error("Tag Pro campaign rollup failed");
       }
     } catch (emailErr) {
       // Email failure must never roll back the tier upgrade
-      console.error("tag-pro-webhook: Unexpected error sending welcome email:", emailErr);
+      console.error(
+        "tag-pro-webhook: Unexpected error sending welcome email:",
+        emailErr,
+      );
     }
   } else if (
     event.type === "customer.subscription.deleted" ||
@@ -250,13 +412,20 @@ JR — Tag is open source at https://github.com/TooFaded420/tag if you want to f
       .maybeSingle();
 
     if (lookupError) {
-      console.error("tag-pro-webhook: Failed to look up subscription:", lookupError);
-      return new Response(JSON.stringify({ error: lookupError.message }), { status: 500 });
+      console.error(
+        "tag-pro-webhook: Failed to look up subscription:",
+        lookupError,
+      );
+      return new Response(JSON.stringify({ error: lookupError.message }), {
+        status: 500,
+      });
     }
 
     if (!subRow) {
       // Unknown subscription — not ours, silently ack
-      console.log(`tag-pro-webhook: Unknown subscription ${stripeSubscriptionId}, skipping`);
+      console.log(
+        `tag-pro-webhook: Unknown subscription ${stripeSubscriptionId}, skipping`,
+      );
       return new Response("OK", { status: 200 });
     }
 
@@ -278,9 +447,14 @@ JR — Tag is open source at https://github.com/TooFaded420/tag if you want to f
       .eq("id", userId);
 
     if (profileError) {
-      console.error("tag-pro-webhook: Failed to downgrade profile tier:", profileError);
+      console.error(
+        "tag-pro-webhook: Failed to downgrade profile tier:",
+        profileError,
+      );
     } else {
-      console.log(`tag-pro-webhook: User ${userId} downgraded to free (sub status: ${subscription.status})`);
+      console.log(
+        `tag-pro-webhook: User ${userId} downgraded to free (sub status: ${subscription.status})`,
+      );
     }
   }
 

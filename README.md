@@ -19,12 +19,10 @@ Hosted version: **[hecz.dev/chat](https://hecz.dev/chat)**
 
 ## Security And Privacy
 
+- BYOK keys should stay client-side or in the self-hoster's own infrastructure.
 - Do not commit `.env` files, provider keys, Supabase service-role keys, Stripe secrets, or webhook secrets.
-- BYOK keys should stay client-side or inside infrastructure controlled by the self-hoster.
-- Public examples should use placeholder project refs and placeholder environment values.
-- Self-hosters are responsible for configuring Supabase RLS, auth providers, deployment secrets, and payment webhooks correctly.
-
-See [SECURITY.md](./SECURITY.md).
+- Public examples should use placeholder project refs and placeholder environment variables.
+- Self-hosters are responsible for configuring Supabase RLS, auth providers, and deployment secrets correctly.
 
 ---
 
@@ -48,12 +46,12 @@ See [SECURITY.md](./SECURITY.md).
 1. Clone this repo.
 2. Create a Supabase project and run the migrations in `supabase/migrations/` in order.
 3. Deploy the Edge Functions in `supabase/functions/` via `supabase functions deploy`.
-4. Copy `.env.example` and set environment variables for your own Supabase/provider accounts.
+4. Set environment variables (see `.env.example` in the main Hecz repo).
 5. Run `pnpm dev` for local development.
 
 The `synthetic-public-proxy` function handles model routing — you'll need either a `synthetic.new` key or configure direct provider keys in Supabase Vault.
 
-Before deploying publicly, review [SECURITY.md](./SECURITY.md) and replace all placeholder values with secrets stored in your hosting provider or Supabase dashboard.
+Before publishing a fork, copy `docs/templates/SECURITY.md` from the source monorepo into the public repo root as `SECURITY.md`.
 
 ---
 
