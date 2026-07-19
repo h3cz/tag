@@ -16,14 +16,33 @@ const SYNTHETIC_BASE_URL =
   Deno.env.get("SYNTHETIC_BASE_URL") ?? "https://api.synthetic.new/v1";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+const UPSTREAM_TIMEOUT_MS = 30_000;
+const MAX_MESSAGE_COUNT = 100;
+const MAX_PROMPT_CHARS = 100_000;
+const MAX_OUTPUT_TOKENS = 8_192;
+const MAX_REQUEST_BYTES = 5 * 1024 * 1024;
+
+async function fetchWithDeadline(input: string, init: RequestInit, deadline: number) {
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) throw new DOMException("Upstream deadline exceeded", "AbortError");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), remainingMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tier-based model whitelists
 // ─────────────────────────────────────────────────────────────────────────────
 const ANON_MODELS = new Set(["hf:openai/gpt-oss-120b"]);
+const HOSTED_TEXT_FALLBACK_MODEL = "hf:zai-org/GLM-4.7-Flash";
 const FREE_MODELS = new Set([
   ...ANON_MODELS,
-  "hf:zai-org/GLM-4.7-Flash",
+  HOSTED_TEXT_FALLBACK_MODEL,
 ]);
 const PRO_MODELS = new Set([
   ...FREE_MODELS,
@@ -61,7 +80,6 @@ const TIER_LIMITS: Record<string, { msg: number; premium: number }> = {
 // BYOK provider → upstream endpoint
 const PROVIDER_ENDPOINTS: Record<string, string> = {
   openrouter: "https://openrouter.ai/api/v1/chat/completions",
-  anthropic: "https://api.anthropic.com/v1/messages",
   openai: "https://api.openai.com/v1/chat/completions",
   google:
     "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
@@ -494,11 +512,22 @@ serve(async (req) => {
     return errorResponse({ error: "Invalid JSON body" }, 400);
   }
 
+  if (new TextEncoder().encode(JSON.stringify(body)).byteLength > MAX_REQUEST_BYTES) {
+    return errorResponse({ error: "request body is too large" }, 413);
+  }
+
   if (!body?.messages || !Array.isArray(body.messages) || body.messages.length === 0) {
     return errorResponse({ error: "messages array required" }, 400);
   }
   if (!body.model || typeof body.model !== "string") {
     return errorResponse({ error: "model field required" }, 400);
+  }
+  if (body.messages.length > MAX_MESSAGE_COUNT) {
+    return errorResponse({ error: `messages cannot exceed ${MAX_MESSAGE_COUNT}` }, 400);
+  }
+  if (body.max_tokens !== undefined &&
+      (!Number.isInteger(body.max_tokens) || body.max_tokens <= 0)) {
+    return errorResponse({ error: "max_tokens must be a positive integer" }, 400);
   }
 
   // Request-level timer for structured observability logs
@@ -506,7 +535,11 @@ serve(async (req) => {
   const requestMessageCount = body.messages.length;
   const promptChars = promptCharCount(body.messages);
   const requestedMaxTokens = typeof body.max_tokens === "number" ? body.max_tokens : 4096;
+  const effectiveMaxTokens = Math.min(requestedMaxTokens, MAX_OUTPUT_TOKENS);
   const requestedTemperature = typeof body.temperature === "number" ? body.temperature : 0.7;
+  if (promptChars > MAX_PROMPT_CHARS) {
+    return errorResponse({ error: `prompt cannot exceed ${MAX_PROMPT_CHARS} characters` }, 413);
+  }
 
   // ── Anon path: IP rate-limit only (T3-style, no captcha) ───────────────────
   // Cloudflare sits in front of Supabase already for DDoS, and anon quota is
@@ -522,7 +555,29 @@ serve(async (req) => {
   const tier = await getUserTier(supabase, userId);
   const ipHash = userId ? null : await sha256(ip);
   const isByok = !!body.byok_key;
+  const byokProvider = body.byok_provider?.trim().toLowerCase() ?? "";
   const isPremium = PREMIUM_MODELS.has(body.model);
+
+  if (isByok && !PROVIDER_ENDPOINTS[byokProvider]) {
+    await recordAiRequestEvent(supabase, {
+      userId,
+      ipHash,
+      tier,
+      model: body.model,
+      isPremium,
+      isByok,
+      byokProvider: byokProvider || null,
+      syntheticKeyScope: "byok",
+      status: "invalid_byok_provider",
+      totalLatencyMs: Date.now() - reqStart,
+      requestMessageCount,
+      promptChars,
+      requestedMaxTokens,
+      temperature: requestedTemperature,
+      errorCode: "invalid_byok_provider",
+    });
+    return errorResponse({ error: "Unsupported BYOK provider" }, 400);
+  }
 
   // ── Model whitelist (skip for BYOK) ──────────────────────────────────────
   if (!isByok) {
@@ -659,8 +714,7 @@ serve(async (req) => {
 
   // ── Build upstream request ────────────────────────────────────────────────
   const upstreamUrl = isByok
-    ? (PROVIDER_ENDPOINTS[body.byok_provider ?? ""] ??
-        "https://api.synthetic.new/v1/chat/completions")
+    ? PROVIDER_ENDPOINTS[byokProvider]
     : `${SYNTHETIC_BASE_URL}/chat/completions`;
 
   const upstreamKey = isByok ? body.byok_key : SYNTHETIC_API_KEY;
@@ -669,7 +723,7 @@ serve(async (req) => {
     model: body.model,
     messages: body.messages,
     temperature: requestedTemperature,
-    max_tokens: requestedMaxTokens,
+    max_tokens: effectiveMaxTokens,
     stream: true,
   };
 
@@ -679,24 +733,138 @@ serve(async (req) => {
     return {
       "Access-Control-Allow-Origin": origin,
       "Access-Control-Allow-Headers": "authorization, content-type, x-anon-session",
-      "Access-Control-Expose-Headers": "X-Anon-Session",
+      "Access-Control-Expose-Headers": "X-Anon-Session, X-Tag-Fallback-Model",
     };
   }
 
   try {
+    const upstreamDeadline = Date.now() + UPSTREAM_TIMEOUT_MS;
     const upstreamStart = Date.now();
-    const upstream = await fetch(upstreamUrl, {
+    const upstream = await fetchWithDeadline(upstreamUrl, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${upstreamKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
-    });
+    }, upstreamDeadline);
     const upstreamLatencyMs = Date.now() - upstreamStart;
 
-    // Non-2xx: read error body and return structured error before streaming.
+    // Non-2xx: try one signed-in fallback for the public default model before
+    // surfacing the provider error. This keeps /chat usable when GPT-OSS has a
+    // model-specific throttle or transient outage, without double-counting quota.
     if (!upstream.ok) {
+      const shouldTryHostedFallback =
+        !isByok &&
+        userId !== null &&
+        body.model === "hf:openai/gpt-oss-120b" &&
+        isModelAllowed(tier, HOSTED_TEXT_FALLBACK_MODEL) &&
+        (upstream.status === 429 || upstream.status === 404 || upstream.status >= 500);
+
+      if (shouldTryHostedFallback) {
+        const fallbackPayload = {
+          ...payload,
+          model: HOSTED_TEXT_FALLBACK_MODEL,
+        };
+        const fallbackStart = Date.now();
+        let fallback: Response | null = null;
+        let fallbackFailure: unknown = null;
+        try {
+          fallback = await fetchWithDeadline(upstreamUrl, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${upstreamKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(fallbackPayload),
+          }, upstreamDeadline);
+        } catch (error) {
+          fallbackFailure = error;
+        }
+        const fallbackLatencyMs = Date.now() - fallbackStart;
+
+        if (fallback?.ok) {
+          await upstream.body?.cancel();
+          await recordAiRequestEvent(supabase, {
+            userId,
+            ipHash,
+            tier,
+            model: HOSTED_TEXT_FALLBACK_MODEL,
+            isPremium: false,
+            isByok,
+            byokProvider: body.byok_provider,
+            syntheticKeyScope: SYNTHETIC_KEY_SCOPE,
+            status: "fallback_ok",
+            upstreamStatus: fallback.status,
+            upstreamLatencyMs: fallbackLatencyMs,
+            totalLatencyMs: Date.now() - reqStart,
+            requestMessageCount,
+            promptChars,
+            requestedMaxTokens,
+            temperature: requestedTemperature,
+            metadata: {
+              original_model: body.model,
+              original_upstream_status: upstream.status,
+            },
+          });
+
+          logRequest({
+            route: "synthetic-public-proxy",
+            status: "fallback_ok",
+            start: reqStart,
+            source_app: SOURCE_APP,
+            tier,
+            model: HOSTED_TEXT_FALLBACK_MODEL,
+            synthetic_key_scope: SYNTHETIC_KEY_SCOPE,
+            upstream_latency_ms: fallbackLatencyMs,
+            upstream_status: fallback.status,
+            user_id: userId,
+          });
+
+          const fallbackHeaders: Record<string, string> = {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "X-Tag-Fallback-Model": HOSTED_TEXT_FALLBACK_MODEL,
+            ...corsHeaders(req),
+          };
+
+          return new Response(fallback.body, {
+            status: 200,
+            headers: fallbackHeaders,
+          });
+        }
+
+        await fallback?.body?.cancel();
+        await recordAiRequestEvent(supabase, {
+          userId,
+          ipHash,
+          tier,
+          model: HOSTED_TEXT_FALLBACK_MODEL,
+          isPremium: false,
+          isByok,
+          syntheticKeyScope: SYNTHETIC_KEY_SCOPE,
+          status: "fallback_error",
+          upstreamStatus: fallback?.status ?? null,
+          upstreamLatencyMs: fallbackLatencyMs,
+          totalLatencyMs: Date.now() - reqStart,
+          requestMessageCount,
+          promptChars,
+          requestedMaxTokens,
+          temperature: requestedTemperature,
+          errorCode: "fallback_error",
+          metadata: {
+            effective_max_tokens: effectiveMaxTokens,
+            original_model: body.model,
+            original_upstream_status: upstream.status,
+            original_upstream_latency_ms: upstreamLatencyMs,
+            fallback_failure: fallbackFailure instanceof Error
+              ? fallbackFailure.message
+              : fallbackFailure ? String(fallbackFailure) : null,
+          },
+        });
+      }
+
       let detail: unknown = null;
       try { detail = await upstream.json(); } catch { detail = await upstream.text(); }
       const retryAfter = upstream.headers.get("retry-after");
@@ -721,6 +889,7 @@ serve(async (req) => {
         errorCode: upstream.status === 429 ? "synthetic_rate_limited" : "upstream_error",
         metadata: {
           detail_type: typeof detail,
+          effective_max_tokens: effectiveMaxTokens,
         },
       });
       logRequest({
@@ -786,6 +955,7 @@ serve(async (req) => {
       promptChars,
       requestedMaxTokens,
       temperature: requestedTemperature,
+      metadata: { effective_max_tokens: effectiveMaxTokens },
     });
 
     logRequest({

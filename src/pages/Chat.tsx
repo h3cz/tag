@@ -1490,27 +1490,25 @@ export default function Chat() {
       const DIRECT_BYOK_PROVIDERS: Record<string, string> = {
         openrouter: "https://openrouter.ai/api/v1/chat/completions",
         openai: "https://api.openai.com/v1/chat/completions",
+        google: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         synthetic: "https://api.synthetic.new/v1/chat/completions",
       };
 
       let activeBYOKProvider: string | undefined;
       let activeBYOKKey: string | undefined;
-      for (const [provider, key] of Object.entries(liveByokKeys)) {
-        if (key && liveByokKeys[provider]) {
-          if (provider === "synthetic" && liveModel.startsWith("hf:")) {
-            activeBYOKProvider = "synthetic";
-            activeBYOKKey = key;
-            break;
-          } else if (provider !== "synthetic") {
-            activeBYOKProvider = provider;
-            activeBYOKKey = key;
-            break;
-          }
-        }
-      }
-      if (!activeBYOKProvider && liveModel.startsWith("hf:") && liveByokKeys["synthetic"]) {
-        activeBYOKProvider = "synthetic";
-        activeBYOKKey = liveByokKeys["synthetic"];
+      const providerPreference = liveModel.startsWith("hf:")
+        ? ["synthetic", "openrouter"]
+        : /gemini/i.test(liveModel)
+          ? ["google", "openrouter"]
+          : /^(gpt-|o[134]-)/i.test(liveModel)
+            ? ["openai", "openrouter"]
+            : ["openrouter"];
+      for (const provider of providerPreference) {
+        const key = liveByokKeys[provider];
+        if (!key) continue;
+        activeBYOKProvider = provider;
+        activeBYOKKey = key;
+        break;
       }
 
       // Read Composio BYOK key at request time (same pattern as other live refs)
@@ -1544,6 +1542,7 @@ export default function Chat() {
             model: liveModel,
             temperature: liveTemperature,
             byok_provider: activeBYOKProvider,
+            byok_key: activeBYOKKey,
             ...(liveComposioKey ? { byok_composio_key: liveComposioKey } : {}),
             ...(liveWorkspaceId ? { workspace_id: liveWorkspaceId } : {}),
           }),

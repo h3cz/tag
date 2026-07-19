@@ -3,7 +3,7 @@ import { Key, X, Eye, EyeOff, Trash2, ChevronDown, ChevronRight, Download, Uploa
 import { cn } from "@/lib/utils";
 import { readComposioKey, COMPOSIO_KEY_STORAGE } from "@/components/chat/IntegrationsPanel";
 
-export type Provider = "openrouter" | "anthropic" | "openai" | "google" | "synthetic" | "ollama";
+export type Provider = "openrouter" | "openai" | "google" | "synthetic";
 
 export interface ProviderConfig {
   id: Provider;
@@ -20,13 +20,6 @@ export const PROVIDERS: ProviderConfig[] = [
     hint: "200+ models. Pay-per-token, BYOK or credits.",
     keyPrefix: "sk-or-",
     signupUrl: "https://openrouter.ai/keys",
-  },
-  {
-    id: "anthropic",
-    label: "Anthropic",
-    hint: "Claude Opus 4.6, Sonnet 4.6, Haiku.",
-    keyPrefix: "sk-ant-",
-    signupUrl: "https://console.anthropic.com/settings/keys",
   },
   {
     id: "openai",
@@ -48,12 +41,6 @@ export const PROVIDERS: ProviderConfig[] = [
     hint: "Cheap multi-model gateway. $60/mo unlimited.",
     keyPrefix: "syn_",
     signupUrl: "https://synthetic.new/dashboard",
-  },
-  {
-    id: "ollama",
-    label: "Ollama (local)",
-    hint: "Self-hosted models. No key needed — set URL.",
-    signupUrl: "https://ollama.com/download",
   },
 ];
 
