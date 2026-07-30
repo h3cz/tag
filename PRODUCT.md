@@ -10,7 +10,7 @@ Tag is a chat surface that lets a user pick from many AI models (Claude, GPT, Ge
 
 Pro tier ($7/mo) unlocks productivity features (Mem0 persistent memory, multi-model compare, file upload + RAG, premium-model access on our synthetic.new sub, BYOK no-throttle).
 
-Open source. MIT licensed. Repo mirror lives at `github.com/TooFaded420/tag` (or wherever JR pushes it).
+Open source. MIT licensed. Repo mirror lives at `github.com/h3cz/tag` (or wherever JR pushes it).
 
 ## Brand
 
@@ -23,7 +23,7 @@ Open source. MIT licensed. Repo mirror lives at `github.com/TooFaded420/tag` (or
 
 - **URL:** `hecz.dev/chat` (sub-route)
 - **Nav:** Add 4th pill `Chat` to existing floating pill nav (next to Blog · Starter Kit · HQ)
-- **Open-source repo:** `github.com/TooFaded420/tag` (separate public repo mirroring the chat code via CI sync)
+- **Open-source repo:** `github.com/h3cz/tag` (separate public repo mirroring the chat code via CI sync)
 
 ## Tier matrix
 
@@ -84,7 +84,7 @@ Make money.
 
 ## Open-source repo plan
 
-- Public repo: `github.com/TooFaded420/tag`
+- Public repo: `github.com/h3cz/tag`
 - License: MIT
 - CI sync from hecz private monorepo → public mirror on every push to main (GitHub Action filters to `src/chat/**` + the relevant edge functions)
 - Public README points users to `hecz.dev/chat` for the hosted version

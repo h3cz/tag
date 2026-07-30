@@ -189,7 +189,7 @@ serve(async (req: Request) => {
       <p>The model picker is in the top bar. Premium models are marked. Just select one and go.</p>
       <a class="cta" href="https://hecz.dev/chat">Open Tag &rarr;</a>
       <div class="signoff">
-        <p>JR. Tag is open source at <a href="https://github.com/TooFaded420/tag">github.com/TooFaded420/tag</a> if you want to fork it or self-host.</p>
+        <p>JR. Tag is open source at <a href="https://github.com/h3cz/tag">github.com/h3cz/tag</a> if you want to fork it or self-host.</p>
       </div>
     </div>
   </div>
@@ -208,7 +208,7 @@ Your $7 just unlocked the good models.
 
 Open chat at https://hecz.dev/chat. The model picker is in the top bar.
 
-JR. Tag is open source at https://github.com/TooFaded420/tag if you want to fork it or self-host.`;
+JR. Tag is open source at https://github.com/h3cz/tag if you want to fork it or self-host.`;
 
         const subject =
           "Welcome to Tag Pro: your $7 just unlocked the good models";
