@@ -85,6 +85,18 @@ const PROVIDER_ENDPOINTS: Record<string, string> = {
     "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
 };
 
+/**
+ * Prototype-safe allowlist lookup. Bracket access on a plain object walks the
+ * prototype chain, so byok_provider="constructor" or "__proto__" would pass
+ * `!PROVIDER_ENDPOINTS[x]` as truthy and bypass the allowlist. hasOwnProperty
+ * only matches keys actually defined above.
+ */
+function providerEndpoint(provider: string): string | undefined {
+  return Object.prototype.hasOwnProperty.call(PROVIDER_ENDPOINTS, provider)
+    ? PROVIDER_ENDPOINTS[provider]
+    : undefined;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Anon session token — 30-minute HMAC-signed token so users verify Turnstile
 // once and reuse the session for up to 30 minutes without re-verifying.
@@ -558,7 +570,7 @@ serve(async (req) => {
   const byokProvider = body.byok_provider?.trim().toLowerCase() ?? "";
   const isPremium = PREMIUM_MODELS.has(body.model);
 
-  if (isByok && !PROVIDER_ENDPOINTS[byokProvider]) {
+  if (isByok && !providerEndpoint(byokProvider)) {
     await recordAiRequestEvent(supabase, {
       userId,
       ipHash,
@@ -714,7 +726,7 @@ serve(async (req) => {
 
   // ── Build upstream request ────────────────────────────────────────────────
   const upstreamUrl = isByok
-    ? PROVIDER_ENDPOINTS[byokProvider]
+    ? providerEndpoint(byokProvider)!
     : `${SYNTHETIC_BASE_URL}/chat/completions`;
 
   const upstreamKey = isByok ? body.byok_key : SYNTHETIC_API_KEY;
