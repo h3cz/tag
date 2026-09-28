@@ -61,7 +61,7 @@ import type { PendingImage } from "@/components/chat/FileDropzone";
 import { SkinPicker, useChatSkin } from "@/components/chat/SkinPicker";
 import { MicButton, TTSButton } from "@/components/chat/VoiceControls";
 import { getHostedDailyLimit } from "@/components/chat/usageLimits";
-import type { Message } from "@ai-sdk/react";
+import type { UIMessage as Message } from "ai";
 
 const MessageContent = lazy(() => import("@/components/chat/MessageContent"));
 import { ImageBubble } from "@/components/chat/ImageBubble";
@@ -2452,7 +2452,7 @@ export default function Chat() {
         return { id: m.id, role: m.role, parts: [{ type: "text" as const, text: textOnly }] };
       });
       const hadImages = toSummarize.some((m) =>
-        (m.parts ?? []).some((p) => p.type === "image" || p.type === "file")
+        (m.parts ?? []).some((p) => (p as { type: string }).type === "image" || p.type === "file")
       );
       const hadCode = toSummarize.some((m) =>
         (m.parts ?? []).some((p) => p.type === "text" && "text" in p && /```/.test((p as { type: "text"; text: string }).text))
