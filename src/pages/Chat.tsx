@@ -561,7 +561,7 @@ function EmptyState({ onPickPrompt, templates, model, temperature, jwt, onOpenSe
   }, []);
 
   const topTemplates = templates.slice(0, 3);
-  const modelName = MODELS.find((m) => m.id === model)?.name ?? model;
+  const modelName = MODELS.find((m) => m.id === model)?.label ?? model;
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center py-12 px-4 select-none">
@@ -1260,13 +1260,13 @@ export default function Chat() {
 
   // ── useChat ─────────────────────────────────────────────────────────────
   const chat = useChat({
-    initialMessages,
+    messages: initialMessages,
     transport: new DefaultChatTransport({
       api: PROXY_URL,
       // Functions are evaluated at request time, reading the latest ref values.
       // Object form would capture the values at transport-construction time
       // (initial mount), before Supabase Auth resolves the session.
-      headers: () =>
+      headers: (): Record<string, string> =>
         jwtRef.current ? { Authorization: `Bearer ${jwtRef.current}` } : {},
       body: () => ({
         model: modelRef.current,
@@ -1887,7 +1887,7 @@ export default function Chat() {
       const body = lastAssistant?.parts
         ? lastAssistant.parts.filter((p) => p.type === "text").map((p) => ("text" in p ? p.text : "")).join("").slice(0, 60)
         : "";
-      const modelLabel = MODELS.find((m) => m.id === modelRef.current)?.name ?? modelRef.current;
+      const modelLabel = MODELS.find((m) => m.id === modelRef.current)?.label ?? modelRef.current;
       try {
         new Notification(`Tag — ${modelLabel}`, {
           body: body || "New reply",
@@ -2514,7 +2514,7 @@ export default function Chat() {
   function handleExportThread() {
     const thread = threads.find((t) => t.id === activeThreadId);
     if (!thread) return;
-    const modelName = MODELS.find((m) => m.id === model)?.name ?? model;
+    const modelName = MODELS.find((m) => m.id === model)?.label ?? model;
     const title = thread.title || "Untitled conversation";
     const date = new Date().toISOString().slice(0, 10);
     const lines: string[] = [
@@ -4189,7 +4189,7 @@ export default function Chat() {
                                   .filter((p) => p.type === "text")
                                   .map((p) => ("text" in p ? p.text : ""))
                                   .join("")
-                              : msg.content;
+                              : (msg as unknown as { content?: string }).content ?? "";
 
                             const isPinnedMsg = activeThread?.pinnedMessageIds?.includes(msg.id) ?? false;
 
