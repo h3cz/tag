@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -46,12 +46,17 @@ const sanitizeSchema = {
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
 
   function handleCopy() {
     navigator.clipboard.writeText(text).then(() => {
+      setFailed(false);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    });
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), 1800);
+    }).catch(() => setFailed(true));
   }
 
   return (
@@ -60,8 +65,9 @@ function CopyButton({ text }: { text: string }) {
       onClick={handleCopy}
       className="absolute right-2 top-2 rounded px-1.5 py-0.5 font-mono text-[10px] tracking-wide text-muted-foreground bg-muted/60 hover:bg-muted hover:text-foreground transition-colors"
       aria-label="Copy code"
+      title={failed ? "Clipboard blocked. Select the code to copy it." : "Copy code"}
     >
-      {copied ? "copied" : "copy"}
+      {failed ? "select to copy" : copied ? "copied" : "copy"}
     </button>
   );
 }
@@ -76,6 +82,8 @@ export default function MessageContent({ content }: { content: string }) {
       remarkPlugins={[remarkGfm]}
       rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
       components={{
+        // Text chat never loads remote images embedded in untrusted model output.
+        img({ alt }) { return <span className="text-muted-foreground">[Image: {alt || "not loaded"}]</span>; },
         // Code blocks + inline code
         code({ className, children, ...rest }) {
           const match = /language-(\w+)/.exec(className ?? "");

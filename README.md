@@ -1,66 +1,77 @@
-# Tag — Open Source Multi-Model AI Chat
+# Tag
 
-**Tag** is the chat product inside [Hecz](https://hecz.dev) — a free + Pro multi-model AI chat with persistent memory, BYOK support, and streaming responses.
+**Your models. Your key. Your own little thinking space.**
 
-Hosted version: **[hecz.dev/chat](https://hecz.dev/chat)**
+Tag is an open-source, browser-based AI chat app. Run it locally or deploy it as a static site. No account, database, Supabase project, or Hecz backend is required.
 
----
+The separately operated [hosted Tag](https://hecz.dev/chat) offers managed models and account features. This repository is the standalone BYOK edition, not a deployment of that service.
 
-## Features
+## Start here
 
-- **Multi-model routing** — Claude, GPT-4o, Gemini, and more via a single interface
-- **Persistent memory** — conversations remembered across sessions via pgvector + mem0
-- **Free + Pro tiers** — generous free limits, Pro unlocks higher rate limits and priority routing
-- **BYOK (Bring Your Own Key)** — use your own API keys for any provider
-- **Streaming responses** — real-time token streaming via Supabase Edge Functions
-- **Graffiti aesthetic** — Tag's signature animated logo and Editorial Street design
+Requires **Node 22.12+** and npm.
 
----
+```sh
+git clone https://github.com/h3cz/tag.git
+cd tag
+npm ci
+npm run dev
+```
 
-## Security And Privacy
+Open the URL Vite prints, select **Connect a provider**, enter a model ID and API key, and start a conversation. No `.env` file is needed. Model availability and charges depend on your provider; the suggested IDs are editable defaults.
 
-- BYOK keys should stay client-side or in the self-hoster's own infrastructure.
-- Do not commit `.env` files, provider keys, Supabase service-role keys, Stripe secrets, or webhook secrets.
-- Public examples should use placeholder project refs and placeholder environment variables.
-- Self-hosters are responsible for configuring Supabase RLS, auth providers, and deployment secrets correctly.
+## What works
 
----
+- Direct streaming chat with OpenRouter, OpenAI, Google AI, Synthetic, or local Ollama using their OpenAI-compatible chat endpoints.
+- Local conversation history, full-text search, stop/retry, Markdown with highlighted code, and copy controls.
+- Create / Build / Learn starters that draft a prompt for review before sending.
+- JSON backup/restore and Markdown exports. Backups contain conversations only.
+- An optional system instruction, mobile navigation, keyboard shortcuts, and reduced-motion support.
 
-## Architecture
+`Ctrl/Cmd + K` focuses the composer; `Ctrl/Cmd + Shift + F` searches history. On desktop, Enter sends; Shift + Enter adds a line. On touch devices, Enter adds a line and the send button sends. Input-method composition is respected.
 
-| Layer | Technology |
-|---|---|
-| Frontend | Vite + React 18 + Tailwind 4 + Radix UI |
-| Backend | Supabase Edge Functions (Deno) |
-| Database | Supabase PostgreSQL with pgvector |
-| Memory | mem0 + pgvector for semantic recall |
-| Auth | Supabase Auth |
-| AI routing | `synthetic-public-proxy` Edge Function |
+## Privacy and storage
 
----
+Your API key stays in tab memory. Reloading clears it. It is never written to browser storage, included in exports, sent to Hecz, or embedded in the build. Requests go directly to the selected provider, which receives your messages and system instruction. Only enter a key on an instance you trust; extensions and injected scripts can read in-memory data.
 
-## Self-Hosting
+Conversations and non-secret settings are stored in this browser's localStorage, unencrypted. Clearing site data removes them. Keep backups, especially in private browsing. History is limited to 100 conversations, 500 messages per conversation, and 4 MB total. Storage failures appear in the UI. Tag has no analytics, external font requests, or account system. Linked provider/GitHub/Hecz pages are separate services.
 
-> Requires: Supabase project, a [synthetic.new](https://synthetic.new) API key (or BYOK provider keys), and Node 22 + pnpm.
+## Local models
 
-1. Clone this repo.
-2. Create a Supabase project and run the migrations in `supabase/migrations/` in order.
-3. Deploy the Edge Functions in `supabase/functions/` via `supabase functions deploy`.
-4. Set environment variables (see `.env.example` in the main Hecz repo).
-5. Run `pnpm dev` for local development.
+Install [Ollama](https://docs.ollama.com), pull a model, and allow Tag's exact origin. With Tag at `http://localhost:5173`:
 
-The `synthetic-public-proxy` function handles model routing — you'll need either a `synthetic.new` key or configure direct provider keys in Supabase Vault.
+```sh
+ollama pull llama3.2
+OLLAMA_ORIGINS=http://localhost:5173 ollama serve
+```
 
-Before publishing a fork, copy `docs/templates/SECURITY.md` from the source monorepo into the public repo root as `SECURITY.md`.
+PowerShell:
 
----
+```powershell
+$env:OLLAMA_ORIGINS = 'http://localhost:5173'
+ollama serve
+```
 
-## License
+Quit an already-running Ollama before restarting with this setting. Select **Ollama (local)** and the model you pulled; no key is required. Match `OLLAMA_ORIGINS` to the actual URL, including the port (`localhost` and `127.0.0.1` differ). Run Tag locally for Ollama: public HTTPS sites may be blocked from local HTTP by browser mixed-content or local-network restrictions.
 
-MIT — see [LICENSE](./LICENSE).
+## Build and deploy
 
-Copyright 2026 JR Lopez. The hosted service at [hecz.dev/chat](https://hecz.dev/chat) is operated separately and not included in this license.
+```sh
+npm run check
+npm run preview
+```
 
----
+`check` runs strict TypeScript, stream/backup tests, and the production build. Deploy `dist/` to a static host. No server secrets are needed. See [SELFHOSTING.md](SELFHOSTING.md).
 
-*This repository is auto-synced from the private Hecz monorepo on every push to `main`.*
+## Scope
+
+This edition focuses on local text chat. Hecz subscriptions, shared workspaces, server memory, images, integrations, and agents belong to the hosted service. Provider CORS policies must allow browser requests; Tag does not run a relay to bypass them. Live calls need your key and credits; automated tests use fixtures, not billable requests.
+
+This repo is maintained independently. The partial monorepo mirror has been replaced with a complete standalone application. There is no automatic overwrite from the private repo. Welcome component changes are shared deliberately; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+See [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md). MIT licensed; see [LICENSE](LICENSE). Tag artwork identifies this project; don't imply affiliation when publishing a modified service.
+
+## Install on your phone
+
+Use Install Tag in the sidebar, or your browser menu to add it to your home screen. The app opens in its own window. Previously visited chat files can reopen offline; cloud models require a connection. Local Ollama can remain available on your network. Keys still clear on reload. On touch devices, Enter adds a line; use the send button to send.
+
+Synthetic presets were verified against its live model catalog on 2026-10-08. Recommended syn: aliases follow provider updates; you can also enter a specific model ID.

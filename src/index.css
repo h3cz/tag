@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+/* HSL channels also support the existing inline hsl(var(--primary)) styles. */
+:root {
+  --background: 30 33% 97%;
+  --foreground: 240 18% 14%;
+  --card: 30 20% 95%;
+  --popover: 0 0% 100%;
+  --primary: 262 18% 44%;
+  --primary-foreground: 0 0% 100%;
+  --muted: 36 18% 92%;
+  --muted-foreground: 240 8% 42%;
+  --accent: 260 20% 92%;
+  --destructive: 0 72% 45%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 30 14% 84%;
+  --ring: 262 18% 44%;
+}
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-popover: hsl(var(--popover));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-ring: hsl(var(--ring));
+}
+
+@layer base {
+  body {
+    margin: 0;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: ui-sans-serif, system-ui, sans-serif;
+  }
+
+  #root {
+    min-height: 100vh;
+  }
+}
+
+@keyframes pro-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes pro-slide-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pro-confetti {
+  from { opacity: 1; transform: translateY(-12px); }
+  to { opacity: 0; transform: translateY(80px); }
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.03); }
+}
+
+@keyframes tag-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
