@@ -1,84 +1,71 @@
-# Tag — Open Source Multi-Model AI Chat
+# Tag
 
-**Tag** is the chat product inside [Hecz](https://hecz.dev) — a free + Pro multi-model AI chat with persistent memory, BYOK support, and streaming responses.
+**Your models. Your key. Your own little thinking space.**
 
-Hosted version: **[hecz.dev/chat](https://hecz.dev/chat)**
+Tag is an open-source, browser-based AI chat app. Run it locally or deploy it as a static site. No account, database, Supabase project, or Hecz backend is required.
 
----
+The separately operated [hosted Tag](https://hecz.dev/chat) offers managed models and account features. This repository is the standalone BYOK edition, not a deployment of that service.
 
-## Features
+## Start here
 
-- **Multi-model routing** — Claude, GPT-4o, Gemini, and more via a single interface
-- **Persistent memory** — conversations remembered across sessions via pgvector + mem0
-- **Free + Pro tiers** — generous free limits, Pro unlocks higher rate limits and priority routing
-- **BYOK (Bring Your Own Key)** — use your own API keys for any provider
-- **Streaming responses** — real-time token streaming via Supabase Edge Functions
-- **Graffiti aesthetic** — Tag's signature animated logo and Editorial Street design
-
----
-
-## Security And Privacy
-
-- BYOK keys should stay client-side or in the self-hoster's own infrastructure.
-- Do not commit `.env` files, provider keys, Supabase service-role keys, Stripe secrets, or webhook secrets.
-- Public examples should use placeholder project refs and placeholder environment variables.
-- Self-hosters are responsible for configuring Supabase RLS, auth providers, and deployment secrets correctly.
-
----
-
-## Architecture
-
-| Layer | Technology |
-|---|---|
-| Frontend | Vite + React 18 + Tailwind 4 |
-| Backend | Supabase Edge Functions (Deno) |
-| Database | Supabase PostgreSQL with pgvector |
-| Memory | mem0 + pgvector for semantic recall |
-| Auth | Supabase Auth |
-| AI routing | `synthetic-public-proxy` Edge Function |
-
----
-
-## Self-Hosting
-
-> Requires: Supabase project, a [synthetic.new](https://synthetic.new) API key (or BYOK provider keys), and Node 22.12+ with npm.
-
-1. Clone this repo.
-2. Create a Supabase project and run the migrations in `supabase/migrations/` in order.
-3. Deploy the Edge Functions in `supabase/functions/` via `supabase functions deploy`.
-4. Copy `.env.example` to `.env` and set your public Supabase URL and anon key. Optionally set the public Turnstile site key. Never put backend secrets in `VITE_*` variables; those values are included in the browser bundle.
-5. Install dependencies with `npm ci`, then run `npm run dev`. The existing Chat page is mounted at `/` and `/chat`.
-
-Frontend checks (also run by `.github/workflows/ci.yml` on pushes and pull requests):
-
-**Bootstrap status:** this scaffold was prepared in an environment without npm registry access or cached frontend packages. `package-lock.json` could not be generated, so CI and `npm ci` are not ready yet. In a network-enabled checkout, run `npm install` to generate the lockfile, retain it in the repository, then run all three checks below. Type checking and the production build have not yet been verified.
+Requires **Node 22.12+** and npm.
 
 ```sh
+git clone https://github.com/h3cz/tag.git
+cd tag
 npm ci
-npx tsc --noEmit
-npm run build
+npm run dev
 ```
 
-`npm run preview` serves the production build from `dist/`. Configure production hosting to serve `index.html` for browser routes. Building does not require real credentials; running the app requires the two Supabase variables above.
+Open the URL Vite prints, select **Connect a provider**, enter a model ID and API key, and start a conversation. No `.env` file is needed. Model availability and charges depend on your provider; the suggested IDs are editable defaults.
 
-This mirror does not contain the backend `supabase/functions/_shared/` helpers imported by the edge functions, all endpoints used by the UI, or the parent product's account pages. Restore those backend resources before deploying the functions. The frontend TypeScript configuration deliberately covers `src/` and `vite.config.ts`; Deno functions are deployed and checked separately. No backend stubs are supplied.
+## What works
 
-The standalone stylesheet supplies the semantic color tokens and animation names used by the components. The original monorepo stylesheet and font assets were not included in this mirror.
+- Direct streaming chat with OpenRouter, OpenAI, Google AI, Synthetic, or local Ollama using their OpenAI-compatible chat endpoints.
+- Local conversation history, full-text search, stop/retry, Markdown with highlighted code, and copy controls.
+- Create / Build / Learn starters that draft a prompt for review before sending.
+- JSON backup/restore and Markdown exports. Backups contain conversations only.
+- An optional system instruction, mobile navigation, keyboard shortcuts, and reduced-motion support.
 
-`src/components/icons/brand.ts` contains six visual stubs for missing brand artwork, using the existing Lucide dependency: `GmailIcon` → `Mail`, `SlackIcon` → `Hash`, `GitHubIcon` → `Github`, `LinearIcon` → `ListTodo`, `NotionIcon` → `NotebookText`, and `GoogleCalendarIcon` → `CalendarDays`. These preserve the integration controls and icon props but do not reproduce the original brand designs. The Supabase client and `cn` helper are functional implementations, not stubs.
+`Ctrl/Cmd + K` focuses the composer; `Ctrl/Cmd + Shift + F` searches history. Enter sends; Shift + Enter adds a line. Input-method composition is respected.
 
-The `synthetic-public-proxy` function handles model routing — you'll need either a `synthetic.new` key or configure direct provider keys in Supabase Vault.
+## Privacy and storage
 
-Before publishing a fork, copy `docs/templates/SECURITY.md` from the source monorepo into the public repo root as `SECURITY.md`.
+Your API key stays in tab memory. Reloading clears it. It is never written to browser storage, included in exports, sent to Hecz, or embedded in the build. Requests go directly to the selected provider, which receives your messages and system instruction. Only enter a key on an instance you trust; extensions and injected scripts can read in-memory data.
 
----
+Conversations and non-secret settings are stored in this browser's localStorage, unencrypted. Clearing site data removes them. Keep backups, especially in private browsing. History is limited to 100 conversations, 500 messages per conversation, and 4 MB total. Storage failures appear in the UI. Tag has no analytics, external font requests, or account system. Linked provider/GitHub/Hecz pages are separate services.
 
-## License
+## Local models
 
-MIT — see [LICENSE](./LICENSE).
+Install [Ollama](https://docs.ollama.com), pull a model, and allow Tag's exact origin. With Tag at `http://localhost:5173`:
 
-Copyright 2026 JR Lopez. The hosted service at [hecz.dev/chat](https://hecz.dev/chat) is operated separately and not included in this license.
+```sh
+ollama pull llama3.2
+OLLAMA_ORIGINS=http://localhost:5173 ollama serve
+```
 
----
+PowerShell:
 
-*This repository is auto-synced from the private Hecz monorepo on every push to `main`.*
+```powershell
+$env:OLLAMA_ORIGINS = 'http://localhost:5173'
+ollama serve
+```
+
+Quit an already-running Ollama before restarting with this setting. Select **Ollama (local)** and the model you pulled; no key is required. Match `OLLAMA_ORIGINS` to the actual URL, including the port (`localhost` and `127.0.0.1` differ). Run Tag locally for Ollama: public HTTPS sites may be blocked from local HTTP by browser mixed-content or local-network restrictions.
+
+## Build and deploy
+
+```sh
+npm run check
+npm run preview
+```
+
+`check` runs strict TypeScript, stream/backup tests, and the production build. Deploy `dist/` to a static host. No server secrets are needed. See [SELFHOSTING.md](SELFHOSTING.md).
+
+## Scope
+
+This edition focuses on local text chat. Hecz subscriptions, shared workspaces, server memory, images, integrations, and agents belong to the hosted service. Provider CORS policies must allow browser requests; Tag does not run a relay to bypass them. Live calls need your key and credits; automated tests use fixtures, not billable requests.
+
+This repo is maintained independently. The partial monorepo mirror has been replaced with a complete standalone application. There is no automatic overwrite from the private repo. Welcome component changes are shared deliberately; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+See [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md). MIT licensed; see [LICENSE](LICENSE). Tag artwork identifies this project; don't imply affiliation when publishing a modified service.

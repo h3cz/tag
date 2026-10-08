@@ -15,8 +15,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # No package-lock.json is committed yet (generated offline); use npm install
-      # until a lockfile lands, then switch this to `npm ci` + `cache: npm`.
-      - run: npm install --no-audit --no-fund
-      - run: npx tsc --noEmit
+          cache: npm
+      - run: npm ci --no-fund
+      - run: npm run typecheck
+      - run: npm test
       - run: npm run build

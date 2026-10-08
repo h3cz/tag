@@ -2,19 +2,19 @@
 
 /* HSL channels also support the existing inline hsl(var(--primary)) styles. */
 :root {
-  --background: 36 33% 97%;
-  --foreground: 240 10% 14%;
-  --card: 0 0% 100%;
+  --background: 30 33% 97%;
+  --foreground: 240 18% 14%;
+  --card: 30 20% 95%;
   --popover: 0 0% 100%;
-  --primary: 260 20% 57%;
+  --primary: 262 18% 44%;
   --primary-foreground: 0 0% 100%;
   --muted: 36 18% 92%;
-  --muted-foreground: 240 5% 43%;
+  --muted-foreground: 240 8% 42%;
   --accent: 260 20% 92%;
   --destructive: 0 72% 45%;
   --destructive-foreground: 0 0% 100%;
-  --border: 36 12% 85%;
-  --ring: 260 20% 57%;
+  --border: 30 14% 84%;
+  --ring: 262 18% 44%;
 }
 
 @theme inline {
