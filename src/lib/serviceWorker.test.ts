@@ -2,12 +2,19 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 
+interface WorkerEvent {
+  request: { method: string; mode: string; url: string };
+  respondWith(response: Promise<unknown>): void;
+  waitUntil(work: Promise<unknown>): void;
+}
+type WorkerHandler = (event: WorkerEvent) => void;
+
 function worker(offline: boolean) {
-  const handlers: Record<string, (event: any) => void> = {};
+  const handlers: Record<string, WorkerHandler> = {};
   const cached: Record<string, unknown> = { "/": "saved-chat-shell", "/offline.html": "offline-page" };
   const put = vi.fn();
   const fetch = vi.fn(async () => { if (offline) throw new Error("offline"); return {ok:true,headers:{get:()=>"text/html"},clone:()=>"public-shell"}; });
-  runInNewContext(readFileSync("public/sw.js", "utf8"), { self:{location:{origin:"https://hecz.dev"},addEventListener:(name:string,handler:any)=>{handlers[name]=handler;}},caches:{match:async (key:string)=>cached[key],open:async()=>({put})},fetch,URL,Response });
+  runInNewContext(readFileSync("public/sw.js", "utf8"), { self:{location:{origin:"https://hecz.dev"},addEventListener:(name:string,handler:WorkerHandler)=>{handlers[name]=handler;}},caches:{match:async (key:string)=>cached[key],open:async()=>({put})},fetch,URL,Response });
   return {handlers,put,fetch};
 }
 async function navigate(state: ReturnType<typeof worker>, path: string) {
