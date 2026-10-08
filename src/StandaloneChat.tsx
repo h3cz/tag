@@ -54,7 +54,7 @@ export default function StandaloneChat() {
     const update = () => setOnline(navigator.onLine);
     window.addEventListener("online", update); window.addEventListener("offline", update);
     const viewport = window.visualViewport;
-    const resize = () => document.documentElement.style.setProperty("--tag-viewport-height", `${viewport?.height ?? window.innerHeight}px`);
+    const resize = () => document.documentElement.style.setProperty("--tag-viewport-height", `${Math.min(viewport?.height ?? window.innerHeight, window.innerHeight)}px`);
     resize(); viewport?.addEventListener("resize", resize);
     return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); viewport?.removeEventListener("resize", resize); document.documentElement.style.removeProperty("--tag-viewport-height"); };
   }, []);
@@ -190,11 +190,11 @@ export default function StandaloneChat() {
           <div className="tag-sidebar-links"><a href="https://github.com/h3cz/tag" target="_blank" rel="noreferrer">Source code ↗</a><a href="https://hecz.dev/chat" target="_blank" rel="noreferrer">Hosted Tag ↗</a></div>
         </div>
       </aside>
-      <main className="tag-main" ref={node => { if (node) node.inert = mobile && sidebarOpen; }}>
+      <main className={`tag-main ${active.messages.length === 0 ? "is-empty" : ""}`} ref={node => { if (node) node.inert = mobile && sidebarOpen; }}>
         <header className="tag-header"><button className="tag-icon-button tag-mobile-only" aria-label="Open conversations" aria-expanded={sidebarOpen} aria-controls="tag-sidebar" onClick={() => setSidebarOpen(!sidebarOpen)}><Menu size={20} /></button><div><span className="tag-header-label">TAG / LOCAL CHAT</span><h1>{active.messages.length ? active.title : "New conversation"}</h1></div><button className="tag-model-button" onClick={openSettings}><span className={`tag-status-dot ${connected ? "connected" : ""}`} /><span className="tag-model-name">{connection.model}</span><KeyRound size={14} /></button>{active.messages.length > 0 && <button className="tag-icon-button" aria-label="Export conversation as Markdown" onClick={exportChat}><Download size={17} /></button>}</header>
         {storageWarning && <div className="tag-alert" role="status">{storageWarning}{savingPaused && <button className="tag-recovery-button" onClick={() => setSavingPaused(false)}>Start fresh</button>}</div>}
         <div ref={feed} className="tag-feed" onScroll={() => { const element = feed.current; if (element) nearBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 100; }}>
-          {active.messages.length === 0 ? <ChatWelcome onPickPrompt={(prompt) => { setDraft(prompt); composer.current?.focus(); }} subtitle="No account. No middleman. Just you and your models." /> : <div className="tag-messages" aria-label="Conversation">
+          {active.messages.length === 0 ? <ChatWelcome onPickPrompt={(prompt) => { setDraft(prompt); composer.current?.focus(); }} subtitle="Your keys. Your conversations." /> : <div className="tag-messages" aria-label="Conversation">
             {active.messages.map((message, index) => <article key={message.id} className={`tag-message tag-message-${message.role}`} aria-label={message.role === "user" ? "Your message" : "Tag's reply"}>
               <div className="tag-message-heading"><span>{message.role === "user" ? "YOU" : "TAG"}</span>{message.role === "assistant" && <small>{message.model}</small>}</div>
               {message.content ? <Suspense fallback={<p className="tag-plain-message">{message.content}</p>}><MessageContent content={message.content} /></Suspense> : <p role="status" className="tag-thinking">{busy ? "Waiting for the model…" : "No answer yet. Try again when you're ready."}</p>}
