@@ -48,3 +48,27 @@
   .tag-starter-list > button { min-height: 68px; padding-top: 10px; padding-bottom: 10px; }
   .tag-welcome-footer { margin-top: 12px; }
 }
+.tag-hosted { height:var(--tag-viewport-height,100dvh); }
+.tag-hosted-header { padding-top:max(8px,env(safe-area-inset-top));padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env(safe-area-inset-right)); }
+.tag-hosted-composer-area { padding-bottom:max(12px,env(safe-area-inset-bottom)); }
+.tag-hosted-composer button[aria-label="Upload file"],.tag-hosted-composer button[aria-label="Start voice input"],.tag-hosted-composer button[aria-label="Stop recording"] { min-height:44px;min-width:44px; }
+.tag-offline-note { max-width:768px;margin:0 auto 10px;font-size:12px;line-height:1.5;color:hsl(var(--muted-foreground)); }
+.tag-mobile-modes { display:none; }
+.tag-sidebar-close { position:absolute;top:max(8px,env(safe-area-inset-top));right:8px;min-height:44px;min-width:44px;place-items:center;border-radius:50%; }
+@media (max-width:1023px) { .tag-sidebar-close { display:grid; } .tag-hosted > aside:not([aria-hidden=true]) { width:min(320px,85vw); } }
+@media (max-width:640px) {
+  .tag-hosted-header { flex-wrap:nowrap;min-height:64px;gap:8px; }
+  .tag-hosted-header .tag-hosted-view-switch,.tag-hosted-header input[aria-label="Thread title"] { display:none; }
+  .tag-hosted-model { flex:1;min-width:0; }
+  .tag-hosted-model .tag-model-trigger { width:100%;max-width:none;justify-content:center; }
+  .tag-hosted-header > button:not([aria-controls]) { display:none; }
+  .tag-mobile-modes { display:flex;gap:6px; }
+  .tag-mobile-modes button { flex:1;min-height:44px;border-radius:8px;border:1px solid hsl(var(--border));font-size:12px; }
+  .tag-mobile-modes button[aria-pressed=true] { background:hsl(var(--primary));color:hsl(var(--primary-foreground)); }
+  .tag-hosted .tag-welcome { padding-top:12px; }
+  .tag-hosted .tag-welcome h2 { font-size:42px;margin:16px 0 12px; }
+  .tag-hosted .tag-welcome-intro { font-size:14px; }
+  .tag-hosted .tag-starter-categories { margin-top:20px; }
+  .tag-hosted .tag-welcome-footer > button { display:none; }
+  .tag-hosted-composer-area { padding-left:12px;padding-right:12px; }
+}

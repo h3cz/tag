@@ -27,7 +27,7 @@ Open the URL Vite prints, select **Connect a provider**, enter a model ID and AP
 - JSON backup/restore and Markdown exports. Backups contain conversations only.
 - An optional system instruction, mobile navigation, keyboard shortcuts, and reduced-motion support.
 
-`Ctrl/Cmd + K` focuses the composer; `Ctrl/Cmd + Shift + F` searches history. Enter sends; Shift + Enter adds a line. Input-method composition is respected.
+`Ctrl/Cmd + K` focuses the composer; `Ctrl/Cmd + Shift + F` searches history. On desktop, Enter sends; Shift + Enter adds a line. On touch devices, Enter adds a line and the send button sends. Input-method composition is respected.
 
 ## Privacy and storage
 
@@ -69,3 +69,9 @@ This edition focuses on local text chat. Hecz subscriptions, shared workspaces, 
 This repo is maintained independently. The partial monorepo mirror has been replaced with a complete standalone application. There is no automatic overwrite from the private repo. Welcome component changes are shared deliberately; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 See [SECURITY.md](SECURITY.md) and [CHANGELOG.md](CHANGELOG.md). MIT licensed; see [LICENSE](LICENSE). Tag artwork identifies this project; don't imply affiliation when publishing a modified service.
+
+## Install on your phone
+
+Use Install Tag in the sidebar, or your browser menu to add it to your home screen. The app opens in its own window. Previously visited chat files can reopen offline; cloud models require a connection. Local Ollama can remain available on your network. Keys still clear on reload. On touch devices, Enter adds a line; use the send button to send.
+
+Synthetic presets were verified against its live model catalog on 2026-10-08. Recommended syn: aliases follow provider updates; you can also enter a specific model ID.

@@ -1,6 +1,8 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { ArrowUp, Check, Copy, Download, KeyRound, Menu, MessageSquarePlus, RotateCcw, Search, Square, Trash2, Upload, X } from "lucide-react";
 import { ChatWelcome } from "./components/chat/ChatWelcome";
+import { TagInstall } from "./components/chat/TagInstall";
+import { SYNTHETIC_MODELS } from "./lib/syntheticModels";
 import { completeChat, isProvider, PROVIDERS, type Connection, type Provider } from "./lib/provider";
 import { downloadFile, newConversation, parseConversations, readConversations, writeConversations, type Conversation } from "./lib/conversations";
 import "./standalone.css";
@@ -30,6 +32,7 @@ export default function StandaloneChat() {
   const [search, setSearch] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [mobile, setMobile] = useState(() => window.matchMedia("(max-width: 760px)").matches);
+  const [online, setOnline] = useState(() => navigator.onLine);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [storageWarning, setStorageWarning] = useState(initial.warning);
@@ -46,6 +49,15 @@ export default function StandaloneChat() {
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const active = conversations.find((thread) => thread.id === activeId) ?? conversations[0];
   const connected = connection.provider === "ollama" || !!connection.key.trim();
+
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    window.addEventListener("online", update); window.addEventListener("offline", update);
+    const viewport = window.visualViewport;
+    const resize = () => document.documentElement.style.setProperty("--tag-viewport-height", `${viewport?.height ?? window.innerHeight}px`);
+    resize(); viewport?.addEventListener("resize", resize);
+    return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); viewport?.removeEventListener("resize", resize); document.documentElement.style.removeProperty("--tag-viewport-height"); };
+  }, []);
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 760px)");
@@ -99,6 +111,7 @@ export default function StandaloneChat() {
 
   async function send(retry = false) {
     if (controller.current || busy) return;
+    if (!online && connection.provider !== "ollama") { setError("You're offline. Reconnect to send; your draft stays here."); return; }
     if (!connected) { openSettings(); return; }
     let messages = [...active.messages];
     if (retry) {
@@ -160,6 +173,7 @@ export default function StandaloneChat() {
           {search && !conversations.some((thread) => `${thread.title} ${thread.messages.map((message) => message.content).join(" ")}`.toLowerCase().includes(search.toLowerCase())) && <p className="tag-no-results">No conversations match.<button onClick={() => setSearch("")}>Clear search</button></p>}
         </nav>
         <div className="tag-sidebar-bottom">
+          <TagInstall manifest="/manifest.webmanifest" />
           <button className="tag-connection" onClick={openSettings}><KeyRound size={16} /><span>{connected ? PROVIDERS[connection.provider].name : "Connect a provider"}<small>{connected ? "Key stays in this tab" : "Your models. Your key."}</small></span><span className={`tag-status-dot ${connected ? "connected" : ""}`} /></button>
           <div className="tag-backup-actions"><button onClick={() => downloadFile("tag-backup.json", JSON.stringify(conversations, null, 2), "application/json")}><Download size={13} />Backup</button><button disabled={busy} onClick={() => importInput.current?.click()}><Upload size={13} />Restore</button></div>
           <input ref={importInput} className="sr-only" type="file" accept=".json,application/json" aria-label="Import conversation backup" onChange={async (event) => {
@@ -177,13 +191,13 @@ export default function StandaloneChat() {
         </div>
       </aside>
       <main className="tag-main" ref={node => { if (node) node.inert = mobile && sidebarOpen; }}>
-        <header className="tag-header"><button className="tag-icon-button tag-mobile-only" aria-label="Open conversations" aria-expanded={sidebarOpen} aria-controls="tag-sidebar" onClick={() => setSidebarOpen(!sidebarOpen)}><Menu size={20} /></button><div><span className="tag-header-label">YOUR OWN LITTLE THINKING SPACE</span><h1>{active.messages.length ? active.title : "The beginning of something."}</h1></div><button className="tag-model-button" onClick={openSettings}><span className={`tag-status-dot ${connected ? "connected" : ""}`} /><span className="tag-model-name">{connection.model}</span><KeyRound size={14} /></button>{active.messages.length > 0 && <button className="tag-icon-button" aria-label="Export conversation as Markdown" onClick={exportChat}><Download size={17} /></button>}</header>
+        <header className="tag-header"><button className="tag-icon-button tag-mobile-only" aria-label="Open conversations" aria-expanded={sidebarOpen} aria-controls="tag-sidebar" onClick={() => setSidebarOpen(!sidebarOpen)}><Menu size={20} /></button><div><span className="tag-header-label">TAG / LOCAL CHAT</span><h1>{active.messages.length ? active.title : "New conversation"}</h1></div><button className="tag-model-button" onClick={openSettings}><span className={`tag-status-dot ${connected ? "connected" : ""}`} /><span className="tag-model-name">{connection.model}</span><KeyRound size={14} /></button>{active.messages.length > 0 && <button className="tag-icon-button" aria-label="Export conversation as Markdown" onClick={exportChat}><Download size={17} /></button>}</header>
         {storageWarning && <div className="tag-alert" role="status">{storageWarning}{savingPaused && <button className="tag-recovery-button" onClick={() => setSavingPaused(false)}>Start fresh</button>}</div>}
         <div ref={feed} className="tag-feed" onScroll={() => { const element = feed.current; if (element) nearBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 100; }}>
           {active.messages.length === 0 ? <ChatWelcome onPickPrompt={(prompt) => { setDraft(prompt); composer.current?.focus(); }} subtitle="No account. No middleman. Just you and your models." /> : <div className="tag-messages" aria-label="Conversation">
             {active.messages.map((message, index) => <article key={message.id} className={`tag-message tag-message-${message.role}`} aria-label={message.role === "user" ? "Your message" : "Tag's reply"}>
               <div className="tag-message-heading"><span>{message.role === "user" ? "YOU" : "TAG"}</span>{message.role === "assistant" && <small>{message.model}</small>}</div>
-              {message.content ? <Suspense fallback={<p className="tag-plain-message">{message.content}</p>}><MessageContent content={message.content} /></Suspense> : <p role="status" className="tag-thinking">{busy ? "Thinking it through…" : "No answer yet. Try again when you're ready."}</p>}
+              {message.content ? <Suspense fallback={<p className="tag-plain-message">{message.content}</p>}><MessageContent content={message.content} /></Suspense> : <p role="status" className="tag-thinking">{busy ? "Waiting for the model…" : "No answer yet. Try again when you're ready."}</p>}
               {message.content && <div className="tag-message-actions"><button onClick={() => void copyMessage(message.id, message.content)} aria-label={copied === message.id ? "Message copied" : "Copy message"}>{copied === message.id ? <Check size={14} /> : <Copy size={14} />}{copied === message.id ? "Copied" : "Copy"}</button>{message.role === "assistant" && index === active.messages.length - 1 && <button disabled={busy} onClick={() => void send(true)}><RotateCcw size={14} />Try again</button>}</div>}
             </article>)}
           </div>}
@@ -191,7 +205,7 @@ export default function StandaloneChat() {
         <div className="tag-composer-area">
           {error && <div className="tag-error" role="alert"><span>{error}</span>{active.messages.some((message) => message.role === "user") && <button disabled={busy} onClick={() => void send(true)}>Retry</button>}<button className="tag-icon-button" aria-label="Dismiss error" onClick={() => setError("")}><X size={16} /></button></div>}
           <form className="tag-composer" onSubmit={(event) => { event.preventDefault(); void send(); }}>
-            <textarea id="tag-message" ref={composer} aria-label="Message Tag" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="A question, a rough idea, a what-if…" rows={2} maxLength={100_000} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} />
+            <textarea id="tag-message" ref={composer} aria-label="Message Tag" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Message Tag…" rows={2} maxLength={100_000} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && !window.matchMedia("(pointer: coarse)").matches) { event.preventDefault(); void send(); } }} />
             <div className="tag-composer-toolbar"><button type="button" onClick={openSettings}><KeyRound size={14} />{connected ? PROVIDERS[connection.provider].name : "Add your key"}</button><span>{busy ? "Writing…" : "Enter to send · Shift + Enter for a new line"}</span>{busy ? <button type="button" className="tag-send" aria-label="Stop response" onClick={() => controller.current?.abort()}><Square size={16} /></button> : <button className="tag-send" type="submit" aria-label="Send message" disabled={!draft.trim()}><ArrowUp size={20} /></button>}</div>
           </form>
           <p className="tag-composer-note">History stays in this browser. AI can make mistakes. Keep a little judgment in the loop.</p>
@@ -208,6 +222,7 @@ export default function StandaloneChat() {
           <div className="tag-settings-heading"><div><p>MAKE YOURSELF AT HOME</p><h2 id="tag-settings-title">Your connection.</h2></div><button type="button" className="tag-icon-button" aria-label="Close connection settings" onClick={() => dialog.current?.close()}><X size={20} /></button></div>
           <p className="tag-settings-intro">Choose a provider and bring a key. Requests go directly from your browser to that provider.</p>
           <label>Provider<select value={draftConnection.provider} disabled={busy} onChange={(event) => { const provider = event.target.value as Provider; setDraftConnection((prev) => ({ ...prev, provider, model: PROVIDERS[provider].model, key: provider === connection.provider ? connection.key : "" })); }}>{Object.entries(PROVIDERS).map(([id, provider]) => <option key={id} value={id}>{provider.name}</option>)}</select></label>
+          {draftConnection.provider === "synthetic" && <label>Synthetic models<select disabled={busy} value={SYNTHETIC_MODELS.some(m => m.id === draftConnection.model) ? draftConnection.model : ""} onChange={event => { if (event.target.value) setDraftConnection(prev => ({...prev,model:event.target.value})); }}><option value="">Custom model ID</option>{SYNTHETIC_MODELS.map(model => <option key={model.id} value={model.id}>{model.label} · {Math.round(model.contextWindow / 1024)}k</option>)}</select></label>}
           <label>Model ID<input required maxLength={200} disabled={busy} value={draftConnection.model} onChange={(event) => setDraftConnection((prev) => ({ ...prev, model: event.target.value }))} placeholder={PROVIDERS[draftConnection.provider].model} /></label>
           <label>API key {draftConnection.provider === "ollama" && "(optional)"}<input type="password" autoComplete="off" spellCheck={false} required={draftConnection.provider !== "ollama"} disabled={busy} value={draftConnection.key} onChange={(event) => setDraftConnection((prev) => ({ ...prev, key: event.target.value }))} placeholder="Kept in memory for this tab" /></label>
           <p className="tag-key-note">Your key is never saved to browser storage or included in backups. Reloading clears it. <a href={PROVIDERS[draftConnection.provider].keysUrl} target="_blank" rel="noreferrer">{draftConnection.provider === "ollama" ? "Ollama setup" : "Get a key"} ↗</a></p>

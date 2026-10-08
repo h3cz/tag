@@ -2,7 +2,7 @@ export const PROVIDERS = {
   openrouter: { name: "OpenRouter", endpoint: "https://openrouter.ai/api/v1/chat/completions", model: "openai/gpt-4o-mini", keysUrl: "https://openrouter.ai/keys" },
   openai: { name: "OpenAI", endpoint: "https://api.openai.com/v1/chat/completions", model: "gpt-4o-mini", keysUrl: "https://platform.openai.com/api-keys" },
   google: { name: "Google AI", endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", model: "gemini-2.5-flash", keysUrl: "https://aistudio.google.com/apikey" },
-  synthetic: { name: "Synthetic", endpoint: "https://api.synthetic.new/v1/chat/completions", model: "hf:openai/gpt-oss-120b", keysUrl: "https://synthetic.new" },
+  synthetic: { name: "Synthetic", endpoint: "https://api.synthetic.new/v1/chat/completions", model: "syn:large:text", keysUrl: "https://synthetic.new" },
   ollama: { name: "Ollama (local)", endpoint: "http://localhost:11434/v1/chat/completions", model: "llama3.2", keysUrl: "https://docs.ollama.com" },
 } as const;
 

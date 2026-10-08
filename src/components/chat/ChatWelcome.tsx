@@ -35,9 +35,9 @@ export function ChatWelcome({ onPickPrompt, subtitle, modelName, onOpenSettings,
   const [category, setCategory] = useState<Category>("Create");
   return (
     <section className="tag-welcome" aria-labelledby="tag-welcome-title">
-      <div className="tag-welcome-eyebrow"><span aria-hidden="true" /> A little curiosity goes a long way</div>
-      <h2 id="tag-welcome-title">Big ideas.<br /><span>Start here.</span></h2>
-      <p className="tag-welcome-intro">A blank page is just a beginning. Make something, work through a problem, or follow a thought.</p>
+      <div className="tag-welcome-eyebrow"><span aria-hidden="true" /> TAG / NEW CONVERSATION</div>
+      <h2 id="tag-welcome-title">What's on<br /><span>your mind?</span></h2>
+      <p className="tag-welcome-intro">Write below, or pick a starting point.</p>
       <div className="tag-starter-categories" aria-label="Prompt categories">
         {(Object.keys(STARTERS) as Category[]).map((name) => {
           const Icon = ICONS[name];
